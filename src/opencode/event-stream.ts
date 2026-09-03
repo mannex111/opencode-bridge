@@ -150,8 +150,13 @@ export class EventStreamManager {
     });
 
     try {
+      // 2026-09-03 修复：传 signal 给 SDK，让 SDK 的 abort listener 能被清理
+      // 背景：@opencode-ai/sdk 内部在 createSseClient 里 register abort listener，
+      //       但 SDK 默认 signal = new AbortController().signal 永不 abort，导致 listener
+      //       永久累积 → OpenCode 进程 listener leak → OOM kill (issue #35499)
       const events = await this.deps.getClient()!.event.subscribe({
         query: { directory: normalizedDirectory },
+        signal: controller.signal,
       });
       console.log(`[OpenCode] 目录事件流订阅成功: ${normalizedDirectory}`);
 
@@ -211,7 +216,10 @@ export class EventStreamManager {
     this.eventAbortController = controller;
 
     try {
-      const events = await this.deps.getClient()!.event.subscribe();
+      // 2026-09-03 修复：传 signal 给 SDK（与见上注释同因）
+      const events = await this.deps.getClient()!.event.subscribe({
+        signal: controller.signal,
+      });
       console.log('[OpenCode] 事件流订阅成功');
       this.eventReconnectAttempt = 0;
 
@@ -328,6 +336,14 @@ export class EventStreamManager {
     // AI 提问事件
     if (event.type === 'question.asked' && event.properties) {
       this.deps.emitEvent('questionAsked', event.properties);
+    }
+
+    // 外部渠道回答事件（TUI / Web / 其他客户端）
+    if (event.type === 'question.replied' && event.properties) {
+      this.deps.emitEvent('questionReplied', event.properties);
+    }
+    if (event.type === 'question.rejected' && event.properties) {
+      this.deps.emitEvent('questionRejected', event.properties);
     }
   }
 

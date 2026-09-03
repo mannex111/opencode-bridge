@@ -21,7 +21,10 @@ export interface InternalJobRegistryOptions {
 }
 
 const DEFAULT_CRON_EXPRESSIONS: InternalJobCronExpressions = {
-  watchdogProbe: '*/30 * * * * *',
+  // 2026-09-03 修复：watchdog cron 改为 1 年 1 次
+  // 原 '*/30 * * * * *'（每30秒）会持续打不存在的 /health 端点，详见 bootstrap.ts 注释
+  // 真正的进程守护由 systemd（Restart=always）负责，watchdog 与 systemd 职责重叠且实际无效
+  watchdogProbe: '0 0 1 1 *',
   processConsistencyCheck: '0 * * * * *',
   staleCleanup: '0 */5 * * * *',
   budgetReset: '0 0 * * *',

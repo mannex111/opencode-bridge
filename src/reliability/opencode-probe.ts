@@ -178,10 +178,21 @@ async function probeHttpHealthEndpoint(
     controller.abort();
   }, timeoutMs);
 
+  // 2026-09-03 修复：probe HTTP 请求带 Basic Auth header
+  // 原因：OpenCode 启用了 basic auth（OPENCODE_SERVER_USERNAME/PASSWORD），
+  // 不带 auth 任何端点都返 401，被 probe 判定为 AUTH_INVALID → 失败计数
+  const authHeaders: Record<string, string> = {};
+  const username = opencodeConfig.serverUsername;
+  const password = opencodeConfig.serverPassword;
+  if (username && password) {
+    authHeaders['Authorization'] = `Basic ${Buffer.from(`${username}:${password}`).toString('base64')}`;
+  }
+
   try {
     const response = await requestFetch(url, {
       method: 'GET',
       signal: controller.signal,
+      headers: authHeaders,
     });
 
     if (response.status === 401 || response.status === 403) {

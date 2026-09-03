@@ -195,6 +195,9 @@ export class OpenCodeEventHub {
 
     // AI 提问
     opencodeClient.on('questionAsked', (event) => this.handleQuestionAsked(event));
+
+    opencodeClient.on('questionReplied', (event) => this.handleQuestionResolved(event));
+    opencodeClient.on('questionRejected', (event) => this.handleQuestionResolved(event));
   }
 
   // ==================== 私有事件处理器 ====================
@@ -701,6 +704,21 @@ export class OpenCodeEventHub {
           });
         }
       }
+    }
+  }
+
+  private handleQuestionResolved(event: unknown): void {
+    if (!this.context) return;
+    const { questionHandler, outputBuffer } = this.injectedDependencies();
+    const data = event as { sessionID?: string; requestID?: string };
+    const requestID = data.requestID;
+    if (!requestID) return;
+
+    const pending = questionHandler.get(requestID);
+    if (pending) {
+      questionHandler.remove(requestID);
+      outputBuffer.touch(pending.conversationKey);
+      console.log(`[问题] 外部回答已同步: ${requestID.slice(0, 8)}...`);
     }
   }
 

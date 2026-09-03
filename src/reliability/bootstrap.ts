@@ -67,9 +67,16 @@ export const bootstrapReliabilityLifecycle = (
     staleLockPaths: [],
   });
 
+  // 2026-09-03 修复：watchdog 关闭
+  // 原因：OpenCode / feishu-bridge 都由 systemd 守护（Restart=always / on-failure），
+  // bridge 自带的 watchdog 每30秒向 localhost:4096/health 发探针，但该路径不存在
+  // （OpenCode 实际端点是 /global/health），且 probe 未带 auth header，导致 100% 失败计数。
+  // 多次失败后 watchdog 会调 restartOpenCodeProcess() 主动杀 OpenCode，与 systemd
+  // Restart 策略冲突且根本救不了 bridge → 直接关掉。systemd 是唯一可信的进程守护。
   const jobHandlers: ReliabilityJobHandlers = {
     watchdogProbe: async () => {
-      await rescueOrchestrator.runWatchdogProbe();
+      // 故意 no-op：如需恢复可改回 rescueOrchestrator.runWatchdogProbe()
+      // 但必须先修复 opencode-probe.ts 的 healthPath + auth header
     },
     processConsistencyCheck: async () => {
       await processCheckRunner.checkProcessConsistency();

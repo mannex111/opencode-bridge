@@ -167,6 +167,9 @@ export const opencodeConfig = {
   get port() { return parseInt(process.env.OPENCODE_PORT || '4096', 10); },
   get serverUsername() { return process.env.OPENCODE_SERVER_USERNAME?.trim() || 'opencode'; },
   get serverPassword() { return process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined; },
+  // 2026-09-03 修复：默认 health path 从 /health 改为 /global/health
+  // 原因：OpenCode 实际路由是 /global/health（SDK 1.3.5+），原 /health 不存在导致 probe 100% 失败
+  get healthPath() { return process.env.OPENCODE_HEALTH_PATH?.trim() || '/global/health'; },
   get autoStart() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START, true); },
   /** @deprecated 不再使用，保留仅供旧配置读取迁移 */
   get autoStartCmd() { return process.env.OPENCODE_AUTO_START_CMD?.trim() || 'opencode serve'; },
