@@ -12,7 +12,8 @@ export function splitAnswerTokens(text: string): string[] {
 export function resolveOptionByToken(
   token: string,
   labels: string[],
-  labelMap: Map<string, string>
+  labelMap: Map<string, string>,
+  descriptions?: string[]
 ): string | null {
   const cleaned = token.replace(/[\.。、]/g, '').trim();
   if (!cleaned) return null;
@@ -20,6 +21,19 @@ export function resolveOptionByToken(
 
   const byLabel = labelMap.get(lower);
   if (byLabel) return byLabel;
+
+  // 描述模糊匹配：用户回 "login" 命中 label="登录"、description="login flow"
+  // 顺序：先尝试 description 完全相等，再尝试 description contains token
+  if (descriptions && descriptions.length === labels.length) {
+    for (let i = 0; i < descriptions.length; i++) {
+      if (descriptions[i].toLowerCase() === lower) return labels[i];
+    }
+    for (let i = 0; i < descriptions.length; i++) {
+      if (descriptions[i].toLowerCase().includes(lower) && lower.length >= 3) {
+        return labels[i];
+      }
+    }
+  }
 
   if (/^[a-z]$/i.test(cleaned)) {
     const index = cleaned.toUpperCase().charCodeAt(0) - 65;
@@ -47,6 +61,7 @@ export function parseQuestionAnswerText(
   }
 
   const labels = question.options.map(opt => opt.label);
+  const descriptions = question.options.map(opt => opt.description || '');
   const labelMap = new Map(labels.map(label => [label.toLowerCase(), label]));
 
   const exactMatch = labelMap.get(trimmed.toLowerCase());
@@ -63,7 +78,7 @@ export function parseQuestionAnswerText(
   let hasInvalid = false;
 
   for (const token of tokens) {
-    const resolved = resolveOptionByToken(token, labels, labelMap);
+    const resolved = resolveOptionByToken(token, labels, labelMap, descriptions);
     if (resolved) {
       matched.push(resolved);
     } else {

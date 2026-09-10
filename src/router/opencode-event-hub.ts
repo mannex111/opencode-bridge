@@ -198,6 +198,54 @@ export class OpenCodeEventHub {
 
     opencodeClient.on('questionReplied', (event) => this.handleQuestionResolved(event));
     opencodeClient.on('questionRejected', (event) => this.handleQuestionResolved(event));
+
+    // 修复 issue #75: WebUI / TUI 直接答了权限，bridge 需要清飞书侧 pending
+    opencodeClient.on('permissionResolved', (event) => this.handlePermissionResolved(event));
+  }
+
+  /**
+   * 权限在外部渠道被解决（WebUI / TUI 直接答了）—— 同步到飞书侧 pending map
+   * 修复 issue #75: WebUI 答了，bridge 不知道，状态卡在飞书侧
+   */
+  private async handlePermissionResolved(event: {
+    permissionId: string;
+    sessionId: string;
+    response: 'allow' | 'deny';
+  }): Promise<void> {
+    if (!this.context) return;
+    // 通过 sessionId 反查 chatId（飞书侧的 pending 是按 chatId 存的）
+    const chatIds = this.findChatIdsBySession(event.sessionId);
+    if (!chatIds || chatIds.length === 0) {
+      console.log(
+        `[Permission] 外部已 ${event.response} (${event.permissionId})，但找不到关联的飞书 chat（session=${event.sessionId}）`
+      );
+      return;
+    }
+    for (const chatId of chatIds) {
+      const removed = permissionHandler.resolveForChat(chatId, event.permissionId);
+      if (removed) {
+        console.log(
+          `[Permission] 外部已 ${event.response}，清理飞书侧 pending: chat=${chatId}, permission=${event.permissionId}`
+        );
+      }
+    }
+  }
+
+  /**
+   * 通过 sessionId 反查绑定的飞书 chat ID
+   * 当前 chatSessionStore.getConversationBySessionId 只返回一个 conversation。
+   */
+  private findChatIdsBySession(sessionId: string): string[] {
+    if (!this.context) return [];
+    try {
+      const { chatSessionStore } = require('../store/chat-session.js') as typeof import('../store/chat-session.js');
+      const conv = chatSessionStore.getConversationBySessionId(sessionId);
+      if (!conv || conv.platform !== 'feishu') return [];
+      // conversationId 就是飞书 chatId（oc_xxx）
+      return [conv.conversationId];
+    } catch {
+      return [];
+    }
   }
 
   // ==================== 私有事件处理器 ====================

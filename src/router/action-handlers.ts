@@ -89,6 +89,36 @@ const parsePermissionDecision = (raw: string): PermissionDecision | null => {
 };
 
 /**
+ * 判断文本是否像权限/授权的回复（y / n / 允许 / 拒绝 / 数字等）
+ *
+ * 与 `parsePermissionDecision` 的区别：这里只判断"形状"，不返回具体 decision。
+ * 用于 router 层决定是否把消息当作权限回复来拦截 —— 当 chat 处于 pending
+ * 状态时，仅"形状像权限回复"的文本才走权限路径；其他文本（任务描述、问题
+ * 内容等）应该继续走到 groupHandler 触发新任务。
+ *
+ * 修复 issue #75: 之前非 y/n 也被拦截，导致 pending 期间无法发新消息。
+ */
+const isPermissionDecisionShape = (raw: string): boolean => {
+  const normalized = raw.normalize('NFKC').trim().toLowerCase();
+  if (!normalized) return false;
+  const compact = normalized
+    .replace(/[\s\u3000]+/g, '')
+    .replace(/[。！!,.，；;:：\-]/g, '');
+
+  // y / n / yes / no / ok / always / 1-9 序号
+  if (/^[yno1-9]$/.test(compact)) return true;
+  if (compact === 'yes' || compact === 'no') return true;
+
+  // 中文关键词
+  const keywords = [
+    '允许', '同意', '通过', '批准', 'allow',
+    '拒绝', '不同意', '不允许', 'deny',
+    '始终', '永久', 'always', '记住', '总是',
+  ];
+  return keywords.some(kw => compact.includes(kw));
+};
+
+/**
  * 创建权限动作处理器
  */
 export function createPermissionActionCallbacks(
@@ -269,6 +299,12 @@ export function createPermissionActionCallbacks(
 
     const pending = permissionHandler.peekForChat(event.chatId);
     if (!pending) return false;
+
+    // 修复 issue #75: 只有"形状像权限回复"的文本才走权限路径
+    // 否则让消息落到 groupHandler 触发新任务，避免 pending 期间任何消息都被吞掉
+    if (!isPermissionDecisionShape(trimmedContent)) {
+      return false;
+    }
 
     const decision = parsePermissionDecision(trimmedContent);
     if (!decision) {

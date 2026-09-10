@@ -345,6 +345,32 @@ export class EventStreamManager {
     if (event.type === 'question.rejected' && event.properties) {
       this.deps.emitEvent('questionRejected', event.properties);
     }
+
+    // 权限在外部渠道被解决（WebUI / TUI 直接答了）—— 同步到飞书侧 pending map
+    // 修复 issue #75: WebUI 答了，bridge 不知道，状态卡在飞书侧
+    if (
+      (event.type === 'permission.replied' || event.type === 'permission.rejected') &&
+      event.properties
+    ) {
+      const props = event.properties as Record<string, unknown>;
+      const permissionId = getFirstString(
+        props.permissionId,
+        props.permissionID,
+        props.permission_id
+      );
+      const sessionId = getFirstString(
+        props.sessionID,
+        props.sessionId,
+        props.session_id
+      );
+      if (permissionId && sessionId) {
+        this.deps.emitEvent('permissionResolved', {
+          permissionId,
+          sessionId,
+          response: event.type === 'permission.replied' ? 'allow' : 'deny',
+        });
+      }
+    }
   }
 
   // ── disconnect ─────────────────────────────────────────────────

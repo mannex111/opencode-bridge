@@ -156,6 +156,10 @@ export class RootRouter {
         }
       }
 
+      // 问题（AI question 卡片）文本回复由 groupHandler.handleMessage 内部
+      // 的 checkPendingQuestion 处理（解析 label / 序号 / 字母 / 多选 / custom），
+      // router 这里不再加额外入口，避免重复处理。
+
       if (this.shouldSkipGroupMessage(feishuEvent)) {
         if (routerConfig.mode === 'dual') {
           const sessionId = chatSessionStore.getSessionId(feishuEvent.chatId) ?? 'none';
