@@ -297,7 +297,7 @@ export function createPermissionActionCallbacks(
     const trimmedContent = event.content.trim();
     if (!trimmedContent || trimmedContent.startsWith('/')) return false;
 
-    const pending = permissionHandler.peekForChat(event.chatId);
+    const pending = permissionHandler.peekLatestForChat(event.chatId);
     if (!pending) return false;
 
     // 修复 issue #75: 只有"形状像权限回复"的文本才走权限路径

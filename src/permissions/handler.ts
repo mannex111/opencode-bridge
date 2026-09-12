@@ -116,6 +116,17 @@ class PermissionHandler {
     return queue[0];
   }
 
+  // 查看队尾（最新一条）待确认权限
+  // 用于文本回复路径：飞书卡片只展示队列里最后一张，用户回复时取队尾
+  // 才能匹配用户实际看到的那条 permission；否则取队首会导致回复了一条
+  // 用户看不到的、已自然消亡的 permission，请求直接 404 被误判为过期。
+  peekLatestForChat(chatId: string): PendingPermission | undefined {
+    this.removeExpired(chatId);
+    const queue = this.pendingByChat.get(chatId);
+    if (!queue || queue.length === 0) return undefined;
+    return queue[queue.length - 1];
+  }
+
   // 获取队列长度
   getQueueSizeForChat(chatId: string): number {
     this.removeExpired(chatId);

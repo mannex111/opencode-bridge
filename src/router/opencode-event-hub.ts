@@ -206,6 +206,9 @@ export class OpenCodeEventHub {
   /**
    * 权限在外部渠道被解决（WebUI / TUI 直接答了）—— 同步到飞书侧 pending map
    * 修复 issue #75: WebUI 答了，bridge 不知道，状态卡在飞书侧
+   *
+   * 修复 Bug 4：resolveForChat 后必须 outputBuffer.touch() 触发卡片重渲染，
+   * 否则飞书侧的"权限确认"卡片会一直显示，即使 pending 已清。
    */
   private async handlePermissionResolved(event: {
     permissionId: string;
@@ -213,6 +216,7 @@ export class OpenCodeEventHub {
     response: 'allow' | 'deny';
   }): Promise<void> {
     if (!this.context) return;
+    const { outputBuffer: ob } = this.injectedDependencies();
     // 通过 sessionId 反查 chatId（飞书侧的 pending 是按 chatId 存的）
     const chatIds = this.findChatIdsBySession(event.sessionId);
     if (!chatIds || chatIds.length === 0) {
@@ -227,6 +231,13 @@ export class OpenCodeEventHub {
         console.log(
           `[Permission] 外部已 ${event.response}，清理飞书侧 pending: chat=${chatId}, permission=${event.permissionId}`
         );
+        // 触发飞书卡片重渲染（让"权限确认"卡片消失）
+        const bufferKey = `chat:${chatId}`;
+        try {
+          ob.touch(bufferKey);
+        } catch (err) {
+          console.warn(`[Permission] outputBuffer.touch 失败: ${bufferKey}`, err);
+        }
       }
     }
   }

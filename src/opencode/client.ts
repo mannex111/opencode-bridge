@@ -114,6 +114,12 @@ class OpencodeClientWrapper extends EventEmitter {
     normalizeDirectory: (directory) => this.normalizeDirectory(directory),
   });
 
+  // ── Connection retry state ───────────────────────────────────
+  private connectRetryTimer: NodeJS.Timeout | null = null;
+  private connectRetryAttempt = 0;
+  private maxConnectRetryMs = 30000; // 指数退避上限 30s
+  private baseConnectRetryMs = 3000;
+
   constructor() {
     super();
   }
@@ -140,14 +146,21 @@ class OpencodeClientWrapper extends EventEmitter {
           statusCode
         );
         console.error(`[OpenCode] ${reason}`);
+        this.scheduleConnectRetry();
         return false;
       }
 
       console.log('[OpenCode] 已连接');
+      this.connectRetryAttempt = 0;
       this.eventStreamManager.setListeningEnabled(true);
+      this.eventStreamManager.resetReconnectAttempt();
 
       // 启动事件监听
       void this.eventStreamManager.start();
+
+      // 订阅已知目录的事件流（修复：重启后不发消息就收不到 OpenCode 事件）
+      void this.subscribeToKnownDirectories();
+
       return true;
     } catch (error) {
       // 统一错误处理：格式化错误信息并添加认证提示
@@ -160,7 +173,58 @@ class OpencodeClientWrapper extends EventEmitter {
         numericCode
       );
       console.error(`[OpenCode] ${reason}`);
+      this.scheduleConnectRetry();
       return false;
+    }
+  }
+
+  // ── Connection retry ──────────────────────────────────────────
+
+  /**
+   * 指数退避重试连接 OpenCode。
+   * 修复 Bug 1：connect() 失败后 eventListeningEnabled=false，导致
+   * event-stream.ts 的 scheduleReconnect 永远不触发（deadlock）。
+   * 此方法在 client 层独立重试，不依赖 eventListeningEnabled。
+   */
+  private scheduleConnectRetry(): void {
+    if (this.connectRetryTimer) return;
+
+    const step = Math.min(this.connectRetryAttempt, 5);
+    const delay = Math.min(this.baseConnectRetryMs * Math.pow(2, step), this.maxConnectRetryMs);
+    this.connectRetryAttempt += 1;
+
+    console.warn(`[OpenCode] 将在 ${Math.round(delay / 1000)} 秒后重试连接（第 ${this.connectRetryAttempt} 次）`);
+    this.connectRetryTimer = setTimeout(() => {
+      this.connectRetryTimer = null;
+      void this.connect();
+    }, delay);
+  }
+
+  // ── Directory event stream subscription ───────────────────────
+
+  /**
+   * 启动后立即订阅所有已知目录的事件流。
+   * 修复 Bug 2：目录事件流懒订阅，重启后不发消息就收不到
+   * OpenCode 主动推送的权限请求/消息输出等事件。
+   */
+  private async subscribeToKnownDirectories(): Promise<void> {
+    try {
+      const { chatSessionStore } = await import('../store/chat-session.js') as typeof import('../store/chat-session.js');
+      const directories = chatSessionStore.getKnownDirectories();
+      if (directories.length === 0) {
+        console.log('[OpenCode] 无已知目录，跳过目录事件流预订阅');
+        return;
+      }
+      console.log(`[OpenCode] 正在预订阅 ${directories.length} 个已知目录的事件流: ${directories.join(', ')}`);
+      for (const dir of directories) {
+        try {
+          await this.ensureDirectoryEventStream(dir);
+        } catch (err) {
+          console.warn(`[OpenCode] 预订阅目录事件流失败: ${dir}`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('[OpenCode] 获取已知目录失败:', err);
     }
   }
 
@@ -453,6 +517,11 @@ class OpencodeClientWrapper extends EventEmitter {
 
   // 断开连接
   disconnect(): void {
+    if (this.connectRetryTimer) {
+      clearTimeout(this.connectRetryTimer);
+      this.connectRetryTimer = null;
+    }
+    this.connectRetryAttempt = 0;
     this.eventStreamManager.disconnect();
     this.client = null;
     console.log('[OpenCode] 已断开连接');
