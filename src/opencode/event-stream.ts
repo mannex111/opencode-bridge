@@ -348,6 +348,11 @@ export class EventStreamManager {
 
     // 权限在外部渠道被解决（WebUI / TUI 直接答了）—— 同步到飞书侧 pending map
     // 修复 issue #75: WebUI 答了，bridge 不知道，状态卡在飞书侧
+    //
+    // Bug 5 根因：OpenCode 服务端实际发的字段是 `requestID`，而原来只查
+    // permissionId/permissionID/permission_id，导致 getFirstString 全部返回
+    // undefined，permissionResolved 事件根本不发，飞书侧 pending 永远不会被清。
+    // 这里补全 requestId/requestID/request_id 三个 key，与上面 permission.asked 处理保持一致。
     if (
       (event.type === 'permission.replied' || event.type === 'permission.rejected') &&
       event.properties
@@ -356,7 +361,11 @@ export class EventStreamManager {
       const permissionId = getFirstString(
         props.permissionId,
         props.permissionID,
-        props.permission_id
+        props.permission_id,
+        props.requestId,
+        props.requestID,
+        props.request_id,
+        props.id
       );
       const sessionId = getFirstString(
         props.sessionID,
@@ -369,6 +378,11 @@ export class EventStreamManager {
           sessionId,
           response: event.type === 'permission.replied' ? 'allow' : 'deny',
         });
+      } else {
+        console.warn(
+          `[OpenCode] permission.${event.type === 'permission.replied' ? 'replied' : 'rejected'} 事件缺少关键字段（permissionId/sessionId 都未解析到），完整 props:`,
+          JSON.stringify(props).slice(0, 600)
+        );
       }
     }
   }
