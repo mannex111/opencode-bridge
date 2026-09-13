@@ -252,7 +252,10 @@ export class OpenCodeEventHub {
    * 飞书侧 pending。现在两个都查，alias 优先。
    */
   private findChatIdsBySession(sessionId: string): string[] {
-    if (!this.context) return [];
+    if (!this.context) {
+      console.log('[Permission][debug] findChatIdsBySession: this.context is null, returning []');
+      return [];
+    }
     try {
       const { chatSessionStore } = require('../store/chat-session.js') as typeof import('../store/chat-session.js');
       // 1. 先查主 data 表
@@ -266,8 +269,10 @@ export class OpenCodeEventHub {
       if (aliasChatId) {
         chatIds.add(aliasChatId);
       }
+      console.log(`[Permission][debug] findChatIdsBySession(${sessionId.slice(0, 28)}): main=${JSON.stringify(conv)}, alias=${aliasChatId}, merged=${JSON.stringify(Array.from(chatIds))}`);
       return Array.from(chatIds);
-    } catch {
+    } catch (err) {
+      console.error('[Permission][debug] findChatIdsBySession threw:', err);
       return [];
     }
   }
