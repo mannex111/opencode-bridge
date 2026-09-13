@@ -244,16 +244,29 @@ export class OpenCodeEventHub {
 
   /**
    * 通过 sessionId 反查绑定的飞书 chat ID
-   * 当前 chatSessionStore.getConversationBySessionId 只返回一个 conversation。
+   *
+   * Bug 6 修复：之前只用 chatSessionStore.getConversationBySessionId 查主 data 表，
+   * 但 handlePermissionRequest 入队时调的是 rememberSessionAlias()，写入的是
+   * sessionAliases 这个临时 map（有 TTL），getConversationBySessionId 不查它，
+   * 导致 findChatIdsBySession 永远返回空 → permissionResolved 永远清理不了
+   * 飞书侧 pending。现在两个都查，alias 优先。
    */
   private findChatIdsBySession(sessionId: string): string[] {
     if (!this.context) return [];
     try {
       const { chatSessionStore } = require('../store/chat-session.js') as typeof import('../store/chat-session.js');
+      // 1. 先查主 data 表
       const conv = chatSessionStore.getConversationBySessionId(sessionId);
-      if (!conv || conv.platform !== 'feishu') return [];
-      // conversationId 就是飞书 chatId（oc_xxx）
-      return [conv.conversationId];
+      const chatIds = new Set<string>();
+      if (conv && conv.platform === 'feishu') {
+        chatIds.add(conv.conversationId);
+      }
+      // 2. 再查 sessionAliases（rememberSessionAlias 写入的临时绑定）
+      const aliasChatId = chatSessionStore.getChatId(sessionId);
+      if (aliasChatId) {
+        chatIds.add(aliasChatId);
+      }
+      return Array.from(chatIds);
     } catch {
       return [];
     }
