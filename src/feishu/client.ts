@@ -39,6 +39,14 @@ class FeishuClient extends EventEmitter {
   private readonly HEARTBEAT_INTERVAL_MS = 30000; // 30秒
   private readonly HEARTBEAT_FAILURE_THRESHOLD = 3; // 连续失败3次认为断连
 
+  // 自动重连（Bug 8 修复：WS 静默死亡后自动恢复）
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectAttempt: number = 0;
+  private readonly RECONNECT_BASE_MS = 5000; // 5 秒起
+  private readonly RECONNECT_MAX_MS = 60000; // 最大 60 秒退避
+  private reconnecting: boolean = false;
+  private boundOnConnectionLost: (() => void) | null = null;
+
   // 机器人自身信息
   private botOpenId: string | null = null;
 
@@ -185,7 +193,18 @@ class FeishuClient extends EventEmitter {
     // 启动连接
     await this.wsClient.start({ eventDispatcher: this.eventDispatcher });
     this.connectionState = 'connected';
+    this.reconnectAttempt = 0;
     console.log('[飞书] 长连接已建立');
+
+    // Bug 8：订阅自身 emit 的 connectionLost，触发自动重连
+    // 先移除旧的监听器（performReconnect 重入 start 时避免重复订阅）
+    if (this.boundOnConnectionLost) {
+      this.off('connectionLost', this.boundOnConnectionLost);
+    }
+    this.boundOnConnectionLost = () => {
+      this.scheduleReconnect('心跳连续失败');
+    };
+    this.on('connectionLost', this.boundOnConnectionLost);
 
     // 获取机器人自身信息
     await this.fetchBotInfo();
@@ -988,6 +1007,11 @@ class FeishuClient extends EventEmitter {
   // 停止长连接
   stop(): void {
     this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.reconnecting = false;
     if (this.wsClient) {
       this.wsClient.close();
       this.wsClient = null;
@@ -997,6 +1021,65 @@ class FeishuClient extends EventEmitter {
     this.cardUpdateQueue.clear();
     this.connectionState = 'disconnected';
     console.log('[飞书] 已断开连接');
+  }
+
+  // ── 自动重连（Bug 8 修复）───────────────────────────────────
+
+  /**
+   * 计划一次重连，指数退避防止重连风暴。
+   * 由 performHeartbeat 在 connectionLost 时调用，或其它需要重连的场景。
+   */
+  private scheduleReconnect(reason: string): void {
+    if (this.reconnecting || this.reconnectTimer) {
+      return;
+    }
+    this.reconnecting = true;
+
+    const step = Math.min(this.reconnectAttempt, 6);
+    const delay = Math.min(this.RECONNECT_BASE_MS * Math.pow(2, step), this.RECONNECT_MAX_MS);
+    this.reconnectAttempt += 1;
+
+    console.warn(`[飞书] ${reason}，将在 ${Math.round(delay / 1000)} 秒后尝试重连（第 ${this.reconnectAttempt} 次）`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      void this.performReconnect();
+    }, delay);
+  }
+
+  /**
+   * 执行实际重连：关掉旧 wsClient（如果有），重置 dispatcher，重新 start。
+   * start() 内会重建 wsClient、订阅 connectionLost、重置 reconnectAttempt=0。
+   */
+  private async performReconnect(): Promise<void> {
+    if (this.connectionState === 'connected') {
+      console.log('[飞书] 重连前检测到已连接，跳过本次重连');
+      this.reconnecting = false;
+      return;
+    }
+
+    console.log('[飞书] 正在执行 WS 重连...');
+    try {
+      // 关掉旧的 wsClient 和 dispatcher，避免事件双订阅
+      if (this.wsClient) {
+        try { this.wsClient.close(); } catch { /* ignore */ }
+        this.wsClient = null;
+      }
+      this.eventDispatcher = this.createEventDispatcher();
+      this.cardActionHandler = undefined;
+      this.cardUpdateQueue.clear();
+      this.heartbeatFailureCount = 0;
+
+      // 重新启动（start() 内部会设置 connectionState='connected'、重置 reconnectAttempt）
+      await this.start();
+      console.log('[飞书] WS 重连成功');
+      this.reconnecting = false;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[飞书] WS 重连失败: ${msg}`);
+      this.reconnecting = false;
+      // 重新调度下一次重连（保持指数退避）
+      this.scheduleReconnect(`重连失败（${msg.slice(0, 80)}）`);
+    }
   }
 }
 
