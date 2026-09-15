@@ -272,9 +272,14 @@ export class GroupHandler {
 
       if (result.ok) {
           questionHandler.remove(pending.request.id);
+          // Bug 9 修复：必须 outputBuffer.touch 让飞书侧卡片重渲染（去掉问题块）
+          // 与 handlePermissionResolved 的 Bug 4 修复对称 — 否则用户回 "a" 后
+          // 飞书侧"问答交互"卡片会一直挂着。
           outputBuffer.touch(`chat:${chatId}`);
       } else if (result.expired) {
           questionHandler.remove(pending.request.id);
+          // Bug 9 修复：expired 分支也要 touch，否则过期提示发出后卡片仍然挂着
+          outputBuffer.touch(`chat:${chatId}`);
           await feishuClient.reply(replyMessageId, '⚠️ 问题已过期，请重新发起对话');
       } else {
           await feishuClient.reply(replyMessageId, '⚠️ 回答提交失败，请重试');
