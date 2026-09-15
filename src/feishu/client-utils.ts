@@ -330,33 +330,32 @@ export function extractTextFromPost(content: unknown): string {
   if (!content || typeof content !== 'object') return '';
   const record = content as { content?: unknown; title?: unknown };
   const parts: string[] = [];
-  const root = record.content;
-  if (!root) return '';
-  const stack: unknown[] = [root];
-  const visited = new Set<object>();
 
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current || typeof current !== 'object') continue;
-    if (visited.has(current as object)) continue;
-    visited.add(current as object);
-
-    if (Array.isArray(current)) {
-      for (const item of current) stack.push(item);
-      continue;
+  const collect = (node: unknown): void => {
+    if (!node) return;
+    if (Array.isArray(node)) {
+      // 飞书 post 的 content 是 [ [paragraph], [paragraph], ... ]
+      // 每个 paragraph 是 [ [text_run], [text_run], ... ]
+      // 必须按 line → inline 顺序收集，否则 DFS 后序遍历会导致文本倒序（Bug 10）
+      for (const item of node) collect(item);
+      return;
     }
-
-    const node = current as Record<string, unknown>;
-    const tag = getString(node.tag);
-    if ((tag === 'text' || tag === 'a') && typeof node.text === 'string') {
-      parts.push(node.text);
+    if (typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    const tag = getString(obj.tag);
+    if ((tag === 'text' || tag === 'a') && typeof obj.text === 'string') {
+      parts.push(obj.text);
+      return;
     }
-
-    for (const value of Object.values(node)) {
-      stack.push(value);
+    // 容器节点：递归访问子节点（保持顺序）
+    if (Array.isArray(obj.content)) {
+      for (const item of obj.content) collect(item);
+    } else if (obj.content !== undefined) {
+      collect(obj.content);
     }
-  }
+  };
 
+  collect(record.content);
   return parts.join('');
 }
 
