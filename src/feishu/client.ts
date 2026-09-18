@@ -185,9 +185,15 @@ class FeishuClient extends EventEmitter {
 
     // 监听消息撤回事件
     // 本地不再重复注册撤回事件，避免与 onMessageRecalled 冲突
+    // Bug 11 修复：HTTP API 心跳无法检测 WS 半死（TCP ESTABLISHED 但服务端不再
+    // 发事件）。启用 lark SDK 内置的 WS pong watchdog —— 启用后 SDK 会在
+    // pingTimeout 秒内没收到任何入站帧时主动 terminate socket 触发 reconnect。
+    // 配 handshakeTimeoutMs 防止握手卡死（DNS/NAT 僵化）。
     this.wsClient = new lark.WSClient({
       appId: feishuConfig.appId,
       appSecret: feishuConfig.appSecret,
+      wsConfig: { pingTimeout: 10 },
+      handshakeTimeoutMs: 15000,
     });
 
     // 启动连接
