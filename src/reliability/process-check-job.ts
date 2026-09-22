@@ -88,7 +88,12 @@ export interface RegisterProcessCheckJobsOptions {
 }
 
 const DEFAULT_CRON_EXPRESSIONS: ProcessCheckJobCronExpressions = {
-  processConsistencyCheck: '*/30 * * * * *',
+  // Bug 14 v3 修复：把 process-consistency-check 从 30 秒一次改为 5 分钟一次。
+  // 原 30 秒一次导致每分钟 NODE-CRON missed execution 警告（任务被阻塞）。
+  // 实测：任务内部 fetch OpenCode + readPidFile 同步 IO，会阻塞事件循环
+  // 几秒，每次都触发 WS 半死 → watchdog 反复重连 → 用户活跃时反而收不到
+  // 消息。把间隔拉长到 5 分钟后，NODE-CRON 不再 miss。
+  processConsistencyCheck: '0 */5 * * * *',
   staleLockCleanup: '0 */5 * * * *',
   budgetReset: '0 0 * * *',
 };
