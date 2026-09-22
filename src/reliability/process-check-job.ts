@@ -341,7 +341,17 @@ export function registerProcessCheckJobs(
     timezone: options.timezone,
     waitForCompletion: true,
     run: async () => {
-      await options.runner.checkProcessConsistency();
+      // Bug 14 v3 诊断：测任务实际耗时
+      const startedAt = Date.now();
+      console.log('[process-consistency-check] 开始执行');
+      try {
+        await options.runner.checkProcessConsistency();
+        const elapsedMs = Date.now() - startedAt;
+        console.log(`[process-consistency-check] 完成 (耗时 ${elapsedMs}ms)`);
+      } catch (e) {
+        const elapsedMs = Date.now() - startedAt;
+        console.error(`[process-consistency-check] 失败 (耗时 ${elapsedMs}ms):`, e);
+      }
     },
   });
 

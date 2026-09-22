@@ -238,7 +238,7 @@ class FeishuClient extends EventEmitter {
     this.startInboundStallWatcher();
   }
 
-  // Bug 14：定期检查入站事件停滞，必要时主动 reconnect
+  // Bug 14 修复：定期检查入站事件停滞，必要时主动 reconnect
   private startInboundStallWatcher(): void {
     if (this.inboundStallWatcherTimer) return;
     // 重置基准，避免重启后立刻误判（上次事件时间可能是很久以前）
@@ -251,14 +251,24 @@ class FeishuClient extends EventEmitter {
 
       console.error(
         `[飞书] 入站事件停滞 ${Math.floor(elapsedMs / 1000)}s 未收到业务消息（HTTP 心跳仍通）` +
-        ` —— 判定 WS 半死，触发主动重连`
+        ` —— 判定 WS 半死，强制踢断 WS 并重连`
       );
-      // 走与 connectionLost 相同的 reconnect 路径
+      // Bug 14 v2：上次修复直接 emit connectionLost，performReconnect 看到
+      // connectionState==='connected' 就跳过。这次强制把 connectionState 切到
+      // 'disconnected' + 主动 close wsClient，让 performReconnect 真的跑一次。
+      this.connectionState = 'disconnected';
+      try {
+        if (this.wsClient) {
+          this.wsClient.close();
+          this.wsClient = null;
+        }
+      } catch (e) {
+        console.error('[飞书] 强制 close wsClient 失败:', e);
+      }
+      // 然后通过 scheduleReconnect 走标准退避路径（与 connectionLost 一致）
       if (this.boundOnConnectionLost) {
         this.boundOnConnectionLost();
       } else {
-        // fallback：直接 emit
-        this.connectionState = 'disconnected';
         this.emit('connectionLost');
       }
     }, this.INBOUND_STALL_CHECK_MS);

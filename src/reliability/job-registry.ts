@@ -25,9 +25,14 @@ const DEFAULT_CRON_EXPRESSIONS: InternalJobCronExpressions = {
   // 原 '*/30 * * * * *'（每30秒）会持续打不存在的 /health 端点，详见 bootstrap.ts 注释
   // 真正的进程守护由 systemd（Restart=always）负责，watchdog 与 systemd 职责重叠且实际无效
   watchdogProbe: '0 0 1 1 *',
-  processConsistencyCheck: '0 * * * * *',
+  // Bug 14 v4 修复：原 '0 * * * * *'（每分钟一次）导致 NODE-CRON missed execution
+  // 每分钟都警告，原因是 process-consistency-check 任务本身 fetch OpenCode +
+  // readPidFile 会阻塞几秒。同时 process-check-job.ts 也注册了同名任务，重复
+  // 调用同 checkProcessConsistency() 函数。改成 5 分钟一次匹配 process-check-job
+  // 间隔，避免重复调用。
+  processConsistencyCheck: '0 */5 * * * *',
   staleCleanup: '0 */5 * * * *',
-  budgetReset: '0 0 * * *',
+  budgetReset: '0 0 * * * *',
 };
 
 const NOOP_ASYNC_HANDLER = async (): Promise<void> => {
