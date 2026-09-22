@@ -224,7 +224,12 @@ class FeishuClient extends EventEmitter {
       this.off('connectionLost', this.boundOnConnectionLost);
     }
     this.boundOnConnectionLost = () => {
-      this.scheduleReconnect('心跳连续失败');
+      // Bug 14 v6 修复：watchdog 走 force=true 路径绕过 connectionState 检查，
+      // 因为 watchdog 自己已经判定"WS 半死"必须重连，不需要 performReconnect
+      // 再做一次乐观跳过检查（之前"重连前检测到已连接，跳过本次重连"就是这）。
+      // connectionLost 事件仍走 scheduleReconnect('心跳连续失败') 路径，让
+      // 它走标准 guard 避免重复重连。
+      this.scheduleReconnect('心跳连续失败', true);
     };
     this.on('connectionLost', this.boundOnConnectionLost);
 
@@ -1100,11 +1105,19 @@ class FeishuClient extends EventEmitter {
    * 计划一次重连，指数退避防止重连风暴。
    * 由 performHeartbeat 在 connectionLost 时调用，或其它需要重连的场景。
    */
-  private scheduleReconnect(reason: string): void {
-    if (this.reconnecting || this.reconnectTimer) {
+  private scheduleReconnect(reason: string, force = false): void {
+    if (!force && (this.reconnecting || this.reconnectTimer)) {
       return;
     }
     this.reconnecting = true;
+    if (force) {
+      // Bug 14 v6：force 路径需要先清掉之前的 reconnectTimer 和 reconnecting 标志
+      // （如果之前在等退避），否则 scheduleReconnect 内部 setTimeout 不会跑。
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+    }
 
     const step = Math.min(this.reconnectAttempt, 6);
     const delay = Math.min(this.RECONNECT_BASE_MS * Math.pow(2, step), this.RECONNECT_MAX_MS);
@@ -1113,7 +1126,7 @@ class FeishuClient extends EventEmitter {
     console.warn(`[飞书] ${reason}，将在 ${Math.round(delay / 1000)} 秒后尝试重连（第 ${this.reconnectAttempt} 次）`);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      void this.performReconnect();
+      void this.performReconnect(force);
     }, delay);
   }
 
@@ -1121,16 +1134,23 @@ class FeishuClient extends EventEmitter {
    * 执行实际重连：关掉旧 wsClient（如果有），重置 dispatcher，重新 start。
    * start() 内会重建 wsClient、订阅 connectionLost、重置 reconnectAttempt=0。
    */
-  private async performReconnect(): Promise<void> {
-    if (this.connectionState === 'connected') {
+  private async performReconnect(force = false): Promise<void> {
+    // Bug 14 v6：force=true 跳过连接状态检查（用于 watchdog 路径，因为 watchdog
+    // 已经判定 WS 半死）。非 force 路径继续保留 guard 防止 connectionLost 重叠。
+    if (!force && this.connectionState === 'connected') {
       console.log('[飞书] 重连前检测到已连接，跳过本次重连');
       this.reconnecting = false;
       return;
     }
 
-    console.log('[飞书] 正在执行 WS 重连...');
+    if (force) {
+      console.log('[飞书] 强制执行 WS 重连（watchdog 判定 WS 半死）...');
+    } else {
+      console.log('[飞书] 正在执行 WS 重连...');
+    }
     try {
-      // 关掉旧的 wsClient 和 dispatcher，避免事件双订阅
+      // Bug 14 v6：force 路径主动关闭 wsClient（之前 watchdog 自己 close 过，
+      // 但 wsClient 可能已经被 race 重新赋值；这里再次确保关闭）。
       if (this.wsClient) {
         try { this.wsClient.close(); } catch { /* ignore */ }
         this.wsClient = null;
@@ -1142,8 +1162,13 @@ class FeishuClient extends EventEmitter {
 
       // 重新启动（start() 内部会设置 connectionState='connected'、重置 reconnectAttempt）
       await this.start();
-      console.log('[飞书] WS 重连成功');
+      if (force) {
+        console.log('[飞书] 强制 WS 重连成功');
+      } else {
+        console.log('[飞书] WS 重连成功');
+      }
       this.reconnecting = false;
+      this.reconnectAttempt = 0; // 成功后 reset
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`[飞书] WS 重连失败: ${msg}`);
