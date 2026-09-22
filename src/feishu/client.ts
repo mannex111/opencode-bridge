@@ -47,6 +47,15 @@ class FeishuClient extends EventEmitter {
   private reconnecting: boolean = false;
   private boundOnConnectionLost: (() => void) | null = null;
 
+  // Bug 14 修复：WS 半死独立检测。lark SDK 的 pong watchdog 只在 server
+  // 完全不发任何 frame 时触发。但实测场景：server TCP 活着 + ping/pong 链
+  // 路活着，但停止发实际 im.message.* 业务事件 —— watchdog 永远不触发。
+  // 这里基于"上次收到业务事件的时间戳"独立计时，超过阈值就主动 reconnect。
+  private lastInboundEventAt: number = Date.now();
+  private inboundStallWatcherTimer: NodeJS.Timeout | null = null;
+  private readonly INBOUND_STALL_THRESHOLD_MS = 180_000; // 3 分钟无业务事件
+  private readonly INBOUND_STALL_CHECK_MS = 60_000;     // 每 60 秒检查一次
+
   // 机器人自身信息
   private botOpenId: string | null = null;
 
@@ -167,11 +176,16 @@ class FeishuClient extends EventEmitter {
     // 注册消息接收事件
     this.eventDispatcher.register({
       'im.message.receive_v1': (data) => {
+        // Bug 14 修复：每次收到业务消息都更新 lastInboundEventAt，
+        // 让 watchdog 知道"还活着"。注意：这条必须在 handleMessage 之前，
+        // 因为 handler 可能抛错或同步处理很久。
+        this.lastInboundEventAt = Date.now();
         this.handleMessage(data as FeishuEventData);
         return { msg: 'ok' };
       },
       // 注册消息已读事件（消除警告）
       'im.message.message_read_v1': (data) => {
+        this.lastInboundEventAt = Date.now();
         return { msg: 'ok' };
       },
     });
@@ -179,6 +193,8 @@ class FeishuClient extends EventEmitter {
     // 注册卡片回调事件
     this.eventDispatcher.register({
       'card.action.trigger': async (data: unknown) => {
+        // Bug 14：卡片回调也算"业务事件"
+        this.lastInboundEventAt = Date.now();
         return await this.handleCardAction(data);
       },
     } as unknown as Record<string, (data: unknown) => Promise<FeishuCardActionResponse | { msg: string }>>);
@@ -217,6 +233,44 @@ class FeishuClient extends EventEmitter {
 
     // 启动心跳检测
     this.startHeartbeat();
+
+    // 启动入站停滞 watchdog（Bug 14 修复）
+    this.startInboundStallWatcher();
+  }
+
+  // Bug 14：定期检查入站事件停滞，必要时主动 reconnect
+  private startInboundStallWatcher(): void {
+    if (this.inboundStallWatcherTimer) return;
+    // 重置基准，避免重启后立刻误判（上次事件时间可能是很久以前）
+    this.lastInboundEventAt = Date.now();
+    this.inboundStallWatcherTimer = setInterval(() => {
+      // 重连中或未连接跳过 —— 重连自己会重置 lastInboundEventAt
+      if (this.reconnecting || this.connectionState !== 'connected') return;
+      const elapsedMs = Date.now() - this.lastInboundEventAt;
+      if (elapsedMs < this.INBOUND_STALL_THRESHOLD_MS) return;
+
+      console.error(
+        `[飞书] 入站事件停滞 ${Math.floor(elapsedMs / 1000)}s 未收到业务消息（HTTP 心跳仍通）` +
+        ` —— 判定 WS 半死，触发主动重连`
+      );
+      // 走与 connectionLost 相同的 reconnect 路径
+      if (this.boundOnConnectionLost) {
+        this.boundOnConnectionLost();
+      } else {
+        // fallback：直接 emit
+        this.connectionState = 'disconnected';
+        this.emit('connectionLost');
+      }
+    }, this.INBOUND_STALL_CHECK_MS);
+    console.log('[飞书] 入站停滞 watchdog 已启动');
+  }
+
+  private stopInboundStallWatcher(): void {
+    if (this.inboundStallWatcherTimer) {
+      clearInterval(this.inboundStallWatcherTimer);
+      this.inboundStallWatcherTimer = null;
+      console.log('[飞书] 入站停滞 watchdog 已停止');
+    }
   }
 
   // 监听群成员退群事件
@@ -1013,6 +1067,7 @@ class FeishuClient extends EventEmitter {
   // 停止长连接
   stop(): void {
     this.stopHeartbeat();
+    this.stopInboundStallWatcher();
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
