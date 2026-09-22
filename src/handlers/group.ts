@@ -200,6 +200,32 @@ export class GroupHandler {
         questionHandler.setCurrentQuestionIndex(pending.request.id, nextIndex);
         outputBuffer.touch(`chat:${chatId}`);
     } else {
+      // Bug 13 修复：检测"全部跳过"场景 —— 用户对每一题都说 skip，bridge 不应
+      // 调 replyQuestion 发全空 answers 数组。OpenCode 服务端对这种 reply 视为
+      // 无效并立即 GC question（实测 16 秒内返回 QuestionNotFoundError）。正确
+      // 做法是调 rejectQuestion（OpenCode 提供的 reject API），让服务端知道
+      // "调用方放弃本问题"。
+      const allSkipped = pending.request.questions.every(
+        (_, idx) =>
+          (pending.draftCustomAnswers[idx] || '').trim() === '' &&
+          (pending.draftAnswers[idx] || []).length === 0
+      );
+      if (allSkipped) {
+        console.log(`[Group] 全部问题已跳过，改用 rejectQuestion: requestId=${pending.request.id.slice(0, 8)}...`);
+        questionHandler.remove(pending.request.id);
+        outputBuffer.touch(`chat:${chatId}`);
+        // rejectQuestion 走老路由（实测兼容 OK），sessionID 当前传 '' 即可
+        const rejectResult = await opencodeClient.rejectQuestion(pending.request.id);
+        if (rejectResult.ok) {
+          await feishuClient.reply(messageId, '✅ 已跳过本题');
+        } else if (rejectResult.expired) {
+          // 跟 replyQuestion 一样的过期文案
+          await feishuClient.reply(messageId, '⚠️ 问题已过期（服务端约 60 秒后清理），跳过未生效');
+        } else {
+          await feishuClient.reply(messageId, '⚠️ 跳过失败，请重试');
+        }
+        return true;
+      }
       // 提交所有答案
       await this.submitQuestionAnswers(pending, messageId, chatId);
     }
