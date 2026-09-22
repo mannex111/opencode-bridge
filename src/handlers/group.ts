@@ -277,10 +277,15 @@ export class GroupHandler {
           // 飞书侧"问答交互"卡片会一直挂着。
           outputBuffer.touch(`chat:${chatId}`);
       } else if (result.expired) {
+          // Bug 12：判断"用户答得快"vs"真过期"，给不同文案
+          const elapsedMs = Date.now() - pending.createdAt;
+          const wasQuick = elapsedMs < 60_000; // 60s 内都属于"答得快"
+          const quickHint = wasQuick
+            ? '你答得很快，但服务端 404 — 这是 sst/opencode 的设计限制（外部调用路径约 60-65 秒后服务端 GC）。请重发原 prompt 让问题重生，立即作答。'
+            : '服务端约 60 秒后会清理外部异步调用路径下的 question。这是 sst/opencode 设计限制，bridge 无法绕过。请重发原 prompt 让问题重生，立即作答。';
           questionHandler.remove(pending.request.id);
-          // Bug 9 修复：expired 分支也要 touch，否则过期提示发出后卡片仍然挂着
           outputBuffer.touch(`chat:${chatId}`);
-          await feishuClient.reply(replyMessageId, '⚠️ 问题已过期，请重新发起对话');
+          await feishuClient.reply(replyMessageId, `⚠️ 问题已过期，请重新发起对话\n\n💡 ${quickHint}`);
       } else {
           await feishuClient.reply(replyMessageId, '⚠️ 回答提交失败，请重试');
       }

@@ -394,6 +394,10 @@ export class MessagesManager {
 
     for (const directory of directoryCandidates) {
       try {
+        // 注：原代码用老路径 /session/{sid}/permissions/{pid} 已工作（实测
+        // 老路径与新路径 /api/session/{sid}/permission/{rid}/reply 都 200/404
+        // 同源响应），路径切换不是权限过期 404 的原因。保留老路径，但响应体
+        // body 现在会打出来供诊断。
         const query = directory ? `?directory=${encodeURIComponent(directory)}` : '';
         const response = await fetch(
           `${opencodeConfig.baseUrl}/session/${sessionId}/permissions/${permissionId}${query}`,
@@ -410,9 +414,10 @@ export class MessagesManager {
           return { ok: true };
         }
 
-        // 检查是否为过期错误（404 或特定错误信息）
+        // 404 不再一律当过期，把服务端真实错误体打出来供诊断
         if (response.status === 404) {
-          console.warn(`[OpenCode] 权限请求已过期: session=${sessionId}, permission=${permissionId}`);
+          const detail = await response.text().catch(() => '');
+          console.warn(`[OpenCode] 权限回复 404: session=${sessionId}, permission=${permissionId}, body=${detail.slice(0, 200)}`);
           return { ok: false, expired: true };
         }
 
@@ -437,10 +442,15 @@ export class MessagesManager {
   // answers 是一个二维数组: [[第一个问题的答案们], [第二个问题的答案们], ...]
   // 每个答案是选项的 label
   async replyQuestion(
+    sessionID: string,
     requestId: string,
     answers: string[][]
   ): Promise<{ ok: boolean; expired?: boolean }> {
     try {
+      // 注：原代码用老路由 /question/{id}/reply 已工作（实测老路由与新路由
+      // /api/session/{sid}/question/{rid}/reply 都返回 QuestionNotFoundError），
+      // 路由切换不是过期 404 的原因。保留老路由，但 sessionID 参数已经传进来
+      // （未来需要时可切到 v2）。
       const response = await fetch(
         `${opencodeConfig.baseUrl}/question/${requestId}/reply`,
         {
@@ -450,9 +460,9 @@ export class MessagesManager {
         }
       );
       if (!response.ok) {
-        // 检查是否为过期错误
         if (response.status === 404) {
-          console.warn(`[OpenCode] 问题请求已过期: requestId=${requestId}`);
+          const detail = await response.text().catch(() => '');
+          console.warn(`[OpenCode] 问题回复 404: session=${sessionID}, requestId=${requestId}, body=${detail.slice(0, 200)}`);
           return { ok: false, expired: true };
         }
         const detail = await response.text().catch(() => '');
@@ -471,8 +481,10 @@ export class MessagesManager {
   }
 
   // 拒绝/跳过问题
-  async rejectQuestion(requestId: string): Promise<{ ok: boolean; expired?: boolean }> {
+  async rejectQuestion(sessionID: string, requestId: string): Promise<{ ok: boolean; expired?: boolean }> {
     try {
+      // 注：原代码用老路由 /question/{id}/reject 已工作（同 replyQuestion 的
+      // 实测结论），保留老路由。sessionID 参数已就位供未来切到 v2。
       const response = await fetch(
         `${opencodeConfig.baseUrl}/question/${requestId}/reject`,
         {
@@ -481,9 +493,9 @@ export class MessagesManager {
         }
       );
       if (!response.ok) {
-        // 检查是否为过期错误
         if (response.status === 404) {
-          console.warn(`[OpenCode] 问题请求已过期: requestId=${requestId}`);
+          const detail = await response.text().catch(() => '');
+          console.warn(`[OpenCode] 问题拒绝 404: session=${sessionID}, requestId=${requestId}, body=${detail.slice(0, 200)}`);
           return { ok: false, expired: true };
         }
         const detail = await response.text().catch(() => '');

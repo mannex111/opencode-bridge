@@ -257,8 +257,10 @@ export class OpenCodeEventHub {
       return [];
     }
     try {
-      const { chatSessionStore } = require('../store/chat-session.js') as typeof import('../store/chat-session.js');
-      // 1. 先查主 data 表
+      // Bug 7 修复：不要在 ESM 文件里再用 require() 拿已经顶层导入过的 chatSessionStore。
+      // 之前因为找不到关联 chat 时，debug log 里看到 `findChatIdsBySession threw:
+      // ReferenceError: require is not defined`，被 catch 吞掉返回 []。
+      // alias lookup (Bug 6 修复) 因此从未生效。这次直接用模块级 import。
       const conv = chatSessionStore.getConversationBySessionId(sessionId);
       const chatIds = new Set<string>();
       if (conv && conv.platform === 'feishu') {
@@ -735,7 +737,22 @@ export class OpenCodeEventHub {
       }
 
       questionHandler.register(request, bufferKey, route.conversationId);
-      upsertTimelineNote(bufferKey, `question:${request.sessionID}:${request.id}`, '🤝 问答交互（请在当前流式卡片中作答）', 'question');
+      // Bug 12 修复：飞书侧卡片加 60 秒有效提示 —— OpenCode 服务端会强制 GC
+      // 外部异步调用路径下的 question（约 66 秒实测），这是服务端设计限制
+      // bridge 改不了。让用户预先知道时限可显著降低"为什么刚答就过期"的困惑。
+      // 飞书卡片无法持续倒计时（静态卡片），所以此处用静态文字 + 入队时间
+      // 戳一次性标注；outputBuffer.touch 后下次重渲染也会重新计算。
+      const expiresAtMs = Date.now() + 60_000;
+      upsertTimelineNote(
+        bufferKey,
+        `question:${request.sessionID}:${request.id}`,
+        `🤝 问答交互（请在当前流式卡片中作答） ⏱ 约 60 秒内有效`,
+        'question'
+      );
+      // 把 expiresAt 写到 questionHandler 上的 pending 结构里，
+      // submitQuestionAnswers 时用这个判断"是真的过期"还是"用户答得快"
+      // 给不同文案。
+      questionHandler.setExpiresAt(request.id, expiresAtMs);
       outputBuffer.touch(bufferKey);
 
       // 为 QQ 等不支持卡片的平台发送文本问答通知

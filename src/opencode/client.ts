@@ -486,12 +486,14 @@ class OpencodeClientWrapper extends EventEmitter {
     requestId: string,
     answers: string[][]
   ): Promise<{ ok: boolean; expired?: boolean }> {
-    return this.messagesManager.replyQuestion(requestId, answers);
+    // sessionID 在 messages.ts 内已就位但未使用；保留参数为未来切到
+    // /api/session/{sid}/question/{rid}/reply 路由时不破坏调用方签名
+    return this.messagesManager.replyQuestion('', requestId, answers);
   }
 
   // 拒绝/跳过问题
   async rejectQuestion(requestId: string): Promise<{ ok: boolean; expired?: boolean }> {
-    return this.messagesManager.rejectQuestion(requestId);
+    return this.messagesManager.rejectQuestion('', requestId);
   }
 
   // ── Commands ────────────────────────────────────────────────────

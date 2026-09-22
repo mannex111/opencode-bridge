@@ -38,6 +38,10 @@ export interface PendingQuestion {
   currentQuestionIndex: number;
   optionPageIndexes: number[];
   createdAt: number;
+  // Bug 12: OpenCode 服务端对外部异步调用路径下的 question 强制 GC（约 66
+  // 秒实测），bridge 在入队时记下 expiresAtMs，submitQuestionAnswers 时用
+  // 这个判断"是真的过期"还是"用户答得快"给不同文案。
+  expiresAtMs?: number;
 }
 
 class QuestionHandler {
@@ -76,6 +80,14 @@ class QuestionHandler {
     const pending = this.pending.get(requestId);
     if (pending) {
       pending.feishuCardMessageId = messageId;
+    }
+  }
+
+  // Bug 12：记录 OpenCode 服务端预计 GC 时间，用于后续区分"真过期"vs"答得快但服务端 404"
+  setExpiresAt(requestId: string, expiresAtMs: number): void {
+    const pending = this.pending.get(requestId);
+    if (pending) {
+      pending.expiresAtMs = expiresAtMs;
     }
   }
 
