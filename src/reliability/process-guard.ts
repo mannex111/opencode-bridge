@@ -310,6 +310,7 @@ async function listProcessesByPowerShell(): Promise<OpenCodeProcessInfo[]> {
     const { stdout } = await execFileAsync('powershell', ['-NoProfile', '-Command', command], {
       windowsHide: true,
       maxBuffer: 1024 * 1024 * 8,
+      timeout: 5000,
     });
     const content = stdout.trim();
     if (!content) {
@@ -348,6 +349,7 @@ async function listProcessesByTaskList(): Promise<OpenCodeProcessInfo[]> {
     const { stdout } = await execFileAsync('tasklist', ['/FO', 'CSV', '/NH'], {
       windowsHide: true,
       maxBuffer: 1024 * 1024 * 8,
+      timeout: 5000,
     });
 
     const lines = stdout
@@ -417,8 +419,12 @@ function parseWindowsCsvLine(line: string): string[] {
 
 async function listProcessesByPs(): Promise<OpenCodeProcessInfo[]> {
   try {
+    // Bug 14 v5 修复：给 execFileAsync 加 5 秒 timeout，否则 WSL 下 ps -ax 可能
+    // 卡住数分钟（特别是在 Windows 进程查询慢的时候），整个事件循环被阻塞
+    // 导致 NODE-CRON missed execution + WS 心跳超时。
     const { stdout } = await execFileAsync('ps', ['-ax', '-o', 'pid=,command='], {
       maxBuffer: 1024 * 1024 * 8,
+      timeout: 5000,
     });
 
     const lines = stdout
