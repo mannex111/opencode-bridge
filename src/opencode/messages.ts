@@ -1,6 +1,6 @@
 import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { Message, Part } from '@opencode-ai/sdk';
-import type { PermissionResponseOptions, ShellExecutionResult } from './client.js';
+import type { DirectoryResponseOptions, PermissionResponseOptions, QuestionResponseOptions, ShellExecutionResult } from './client.js';
 import { opencodeConfig, modelConfig } from '../config.js';
 import {
   withOpencodeAuthorizationHeaders,
@@ -345,7 +345,7 @@ export class MessagesManager {
     }
   }
 
-  private buildPermissionDirectoryCandidates(options?: PermissionResponseOptions): Array<string | undefined> {
+  private buildDirectoryCandidates(options?: DirectoryResponseOptions): Array<string | undefined> {
     const candidates: Array<string | undefined> = [];
     const seen = new Set<string>();
 
@@ -390,7 +390,7 @@ export class MessagesManager {
     options?: PermissionResponseOptions
   ): Promise<{ ok: boolean; expired?: boolean }> {
     const responseType = allow ? (remember ? 'always' : 'once') : 'reject';
-    const directoryCandidates = this.buildPermissionDirectoryCandidates(options);
+    const directoryCandidates = this.buildDirectoryCandidates(options);
 
     for (const directory of directoryCandidates) {
       try {
@@ -438,78 +438,115 @@ export class MessagesManager {
     return { ok: false };
   }
 
-  // 回复问题 (question 工具)
-  // answers 是一个二维数组: [[第一个问题的答案们], [第二个问题的答案们], ...]
-  // 每个答案是选项的 label
-  async replyQuestion(
-    sessionID: string,
-    requestId: string,
-    answers: string[][]
-  ): Promise<{ ok: boolean; expired?: boolean }> {
+  private async listPendingQuestionIds(directory?: string): Promise<string[] | null> {
     try {
-      // 注：原代码用老路由 /question/{id}/reply 已工作（实测老路由与新路由
-      // /api/session/{sid}/question/{rid}/reply 都返回 QuestionNotFoundError），
-      // 路由切换不是过期 404 的原因。保留老路由，但 sessionID 参数已经传进来
-      // （未来需要时可切到 v2）。
-      const response = await fetch(
-        `${opencodeConfig.baseUrl}/question/${requestId}/reply`,
-        {
-          method: 'POST',
-          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ answers }),
-        }
-      );
+      const query = directory ? `?directory=${encodeURIComponent(directory)}` : '';
+      const response = await fetch(`${opencodeConfig.baseUrl}/question${query}`, {
+        method: 'GET',
+        headers: withOpencodeAuthorizationHeaders(),
+      });
       if (!response.ok) {
-        if (response.status === 404) {
-          const detail = await response.text().catch(() => '');
-          console.warn(`[OpenCode] 问题回复 404: session=${sessionID}, requestId=${requestId}, body=${detail.slice(0, 200)}`);
-          return { ok: false, expired: true };
-        }
-        const detail = await response.text().catch(() => '');
-        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
-        const message = appendAuthHint(
-          `回复问题失败（HTTP ${response.status} ${response.statusText}）${suffix}`,
-          response.status
-        );
-        console.error(`[OpenCode] ${message}`);
+        return null;
       }
-      return { ok: response.ok };
+      const payload = await response.json().catch(() => null);
+      if (!Array.isArray(payload)) {
+        return null;
+      }
+      return payload
+        .map((item) => {
+          const record = item as Record<string, unknown> | null;
+          return record && typeof record.id === 'string' ? record.id : null;
+        })
+        .filter((id): id is string => Boolean(id));
     } catch (error) {
-      console.error('[OpenCode] 回复问题失败:', error);
-      return { ok: false };
+      console.debug('[OpenCode] 查询 pending question 失败:', error instanceof Error ? error.message : String(error));
+      return null;
     }
   }
 
-  // 拒绝/跳过问题
-  async rejectQuestion(sessionID: string, requestId: string): Promise<{ ok: boolean; expired?: boolean }> {
-    try {
-      // 注：原代码用老路由 /question/{id}/reject 已工作（同 replyQuestion 的
-      // 实测结论），保留老路由。sessionID 参数已就位供未来切到 v2。
-      const response = await fetch(
-        `${opencodeConfig.baseUrl}/question/${requestId}/reject`,
-        {
-          method: 'POST',
-          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
-        }
-      );
-      if (!response.ok) {
-        if (response.status === 404) {
+  // question 的 reply/reject 作用于按目录隔离的 InstanceState pending 表
+  // （OpenCode packages/opencode/src/question/index.ts）。必须带上会话所属
+  // directory，否则会命中服务端默认 location 报 QuestionNotFoundError(404)——
+  // 这正是「飞书作答同步失败」的根因。404 时再用 /question 列表兜底区分
+  // 「命中错误实例/上游竞态」与「真的已过期」。
+  private async dispatchQuestionAction(
+    action: 'reply' | 'reject',
+    requestId: string,
+    sessionID: string,
+    options?: QuestionResponseOptions,
+    answers?: string[][]
+  ): Promise<{ ok: boolean; expired?: boolean }> {
+    const directoryCandidates = this.buildDirectoryCandidates(options);
+    const actionLabel = action === 'reply' ? '回复问题' : '拒绝问题';
+
+    const attempt = async (): Promise<boolean> => {
+      for (const directory of directoryCandidates) {
+        const directoryLabel = directory ?? '<default>';
+        try {
+          const query = directory ? `?directory=${encodeURIComponent(directory)}` : '';
+          const response = await fetch(
+            `${opencodeConfig.baseUrl}/question/${requestId}/${action}${query}`,
+            {
+              method: 'POST',
+              headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+              ...(action === 'reply' ? { body: JSON.stringify({ answers: answers ?? [] }) } : {}),
+            }
+          );
+
+          if (response.ok) {
+            return true;
+          }
+
           const detail = await response.text().catch(() => '');
-          console.warn(`[OpenCode] 问题拒绝 404: session=${sessionID}, requestId=${requestId}, body=${detail.slice(0, 200)}`);
-          return { ok: false, expired: true };
+          if (response.status === 404) {
+            console.warn(
+              `[OpenCode] 问题${action === 'reply' ? '回复' : '拒绝'} 404: session=${sessionID}, requestId=${requestId}, directory=${directoryLabel}, body=${detail.slice(0, 200)}`
+            );
+            continue;
+          }
+
+          const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+          console.error(
+            `[OpenCode] ${appendAuthHint(`${actionLabel}失败（HTTP ${response.status} ${response.statusText}）${suffix}`, response.status)} (directory=${directoryLabel})`
+          );
+        } catch (error) {
+          console.error(`[OpenCode] ${actionLabel}失败 (directory=${directoryLabel}):`, error);
         }
-        const detail = await response.text().catch(() => '');
-        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
-        const message = appendAuthHint(
-          `拒绝问题失败（HTTP ${response.status} ${response.statusText}）${suffix}`,
-          response.status
-        );
-        console.error(`[OpenCode] ${message}`);
       }
-      return { ok: response.ok };
-    } catch (error) {
-      console.error('[OpenCode] 拒绝问题失败:', error);
+      return false;
+    };
+
+    if (await attempt()) {
+      return { ok: true };
+    }
+
+    const pendingIds = await this.listPendingQuestionIds(options?.directory);
+    if (pendingIds && pendingIds.includes(requestId)) {
+      console.warn(`[OpenCode] question ${requestId} 仍在 pending，重试一次 ${action}`);
+      if (await attempt()) {
+        return { ok: true };
+      }
       return { ok: false };
     }
+
+    return { ok: false, expired: true };
+  }
+
+  // answers: [[第一题的答案们], [第二题的答案们], ...]，每项为选中选项的 label
+  async replyQuestion(
+    sessionID: string,
+    requestId: string,
+    answers: string[][],
+    options?: QuestionResponseOptions
+  ): Promise<{ ok: boolean; expired?: boolean }> {
+    return this.dispatchQuestionAction('reply', requestId, sessionID, options, answers);
+  }
+
+  async rejectQuestion(
+    sessionID: string,
+    requestId: string,
+    options?: QuestionResponseOptions
+  ): Promise<{ ok: boolean; expired?: boolean }> {
+    return this.dispatchQuestionAction('reject', requestId, sessionID, options);
   }
 }

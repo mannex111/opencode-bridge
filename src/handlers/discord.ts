@@ -26,6 +26,7 @@ import { permissionHandler } from '../permissions/handler.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { validateFilePath } from './file-sender.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { resolveQuestionDirectory } from '../utils/question-directory.js';
 import { isChatModelAllowed, parseChatModelReference } from '../utils/chat-model-whitelist.js';
 import type { PlatformMessageEvent, PlatformSender } from '../platform/types.js';
 import {
@@ -321,7 +322,14 @@ class DiscordHandler {
       }
     }
 
-    const result = await opencodeClient.replyQuestion(pending.request.id, answers);
+    const questionDirectory = await resolveQuestionDirectory(
+      pending.request.sessionID,
+      chatSessionStore.getSessionByConversation('discord', pending.chatId)?.resolvedDirectory
+    );
+    const result = await opencodeClient.replyQuestion(pending.request.id, answers, {
+      sessionId: pending.request.sessionID,
+      ...(questionDirectory ? { directory: questionDirectory } : {}),
+    });
     if (!result.ok) {
       if (result.expired) {
         questionHandler.remove(pending.request.id);

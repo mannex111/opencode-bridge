@@ -26,9 +26,17 @@ export interface PermissionRequestEvent {
   callId?: string;
 }
 
-export interface PermissionResponseOptions {
+// 按目录隔离的 OpenCode location 实例：权限/问答响应都必须带上正确的 directory，
+// 否则会落到服务端默认 location 而报 not found。
+export interface DirectoryResponseOptions {
   directory?: string;
   fallbackDirectories?: string[];
+}
+
+export type PermissionResponseOptions = DirectoryResponseOptions;
+
+export interface QuestionResponseOptions extends DirectoryResponseOptions {
+  sessionId?: string;
 }
 
 // 消息部分类型
@@ -482,18 +490,23 @@ class OpencodeClientWrapper extends EventEmitter {
   }
 
   // 回复问题 (question 工具)
+  // options.directory 必须传入会话所属工作目录：question 的 pending 表按
+  // OpenCode location(InstanceState) 隔离，不带 directory 会命中默认 location
+  // 并返回 QuestionNotFoundError(404)。
   async replyQuestion(
     requestId: string,
-    answers: string[][]
+    answers: string[][],
+    options?: QuestionResponseOptions
   ): Promise<{ ok: boolean; expired?: boolean }> {
-    // sessionID 在 messages.ts 内已就位但未使用；保留参数为未来切到
-    // /api/session/{sid}/question/{rid}/reply 路由时不破坏调用方签名
-    return this.messagesManager.replyQuestion('', requestId, answers);
+    return this.messagesManager.replyQuestion(options?.sessionId ?? '', requestId, answers, options);
   }
 
   // 拒绝/跳过问题
-  async rejectQuestion(requestId: string): Promise<{ ok: boolean; expired?: boolean }> {
-    return this.messagesManager.rejectQuestion('', requestId);
+  async rejectQuestion(
+    requestId: string,
+    options?: QuestionResponseOptions
+  ): Promise<{ ok: boolean; expired?: boolean }> {
+    return this.messagesManager.rejectQuestion(options?.sessionId ?? '', requestId, options);
   }
 
   // ── Commands ────────────────────────────────────────────────────

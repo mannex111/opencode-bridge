@@ -317,7 +317,7 @@ describe('DiscordHandler permission text flow', () => {
   });
 
   it('存在待回答问题时，文本选择应提交 question 回答', async () => {
-    chatSessionStore.setSessionByConversation('discord', 'conv-1', 'session-q-1', 'user-1');
+    chatSessionStore.setSessionByConversation('discord', 'conv-1', 'session-q-1', 'user-1', undefined, { resolvedDirectory: '/work/discord-proj' });
     questionHandler.register(
       {
         id: 'question-1',
@@ -343,7 +343,7 @@ describe('DiscordHandler permission text flow', () => {
 
     await handler.handleMessage(makeEvent('深度'));
 
-    expect(replyQuestionSpy).toHaveBeenCalledWith('question-1', [['深度']]);
+    expect(replyQuestionSpy).toHaveBeenCalledWith('question-1', [['深度']], { sessionId: 'session-q-1', directory: '/work/discord-proj' });
     expect(questionHandler.get('question-1')).toBeUndefined();
     expect(sender.sendText).toHaveBeenCalledTimes(1);
   });

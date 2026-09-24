@@ -13,6 +13,7 @@ import { chatSessionStore, type SessionOrderMode } from '../store/chat-session.j
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { normalizeEffortLevel, type EffortLevel } from '../commands/effort.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { resolveQuestionDirectory } from '../utils/question-directory.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import { permissionHandler } from '../permissions/handler.js';
@@ -472,7 +473,14 @@ export class QQHandler {
     const bufferKey = `chat:qq:${chatId}`;
     this.ensureStreamingBuffer(chatId, pending.request.sessionID);
 
-    const result = await opencodeClient.replyQuestion(pending.request.id, answers);
+    const questionDirectory = await resolveQuestionDirectory(
+      pending.request.sessionID,
+      chatSessionStore.getSessionByConversation('qq', chatId)?.resolvedDirectory
+    );
+    const result = await opencodeClient.replyQuestion(pending.request.id, answers, {
+      sessionId: pending.request.sessionID,
+      ...(questionDirectory ? { directory: questionDirectory } : {}),
+    });
 
     if (result.ok) {
       questionHandler.remove(pending.request.id);

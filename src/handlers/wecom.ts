@@ -14,6 +14,7 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { resolveQuestionDirectory } from '../utils/question-directory.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import { KNOWN_EFFORT_LEVELS, normalizeEffortLevel, type EffortLevel } from '../commands/effort.js';
@@ -1059,7 +1060,14 @@ export class WeComHandler {
 
     console.log(`[企业微信] 提交问题回答: requestId=${pending.request.id.slice(0, 8)}...`);
 
-    const result = await opencodeClient.replyQuestion(pending.request.id, answers);
+    const questionDirectory = await resolveQuestionDirectory(
+      pending.request.sessionID,
+      chatSessionStore.getSessionByConversation('wecom', chatId)?.resolvedDirectory
+    );
+    const result = await opencodeClient.replyQuestion(pending.request.id, answers, {
+      sessionId: pending.request.sessionID,
+      ...(questionDirectory ? { directory: questionDirectory } : {}),
+    });
 
     if (result.ok) {
       questionHandler.remove(pending.request.id);

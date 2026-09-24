@@ -15,6 +15,7 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { resolveQuestionDirectory } from '../utils/question-directory.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import type { EffortLevel } from '../commands/effort.js';
@@ -392,7 +393,14 @@ export class WeixinHandler {
         }
       }
 
-      const result = await opencodeClient.replyQuestion(pending.request.id, answers);
+      const questionDirectory = await resolveQuestionDirectory(
+        pending.request.sessionID,
+        chatSessionStore.getSessionByConversation('weixin', conversationId)?.resolvedDirectory
+      );
+      const result = await opencodeClient.replyQuestion(pending.request.id, answers, {
+        sessionId: pending.request.sessionID,
+        ...(questionDirectory ? { directory: questionDirectory } : {}),
+      });
 
       questionHandler.remove(pending.request.id);
 

@@ -15,6 +15,7 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, getHelpText, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { resolveQuestionDirectory } from '../utils/question-directory.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import type { PlatformMessageEvent, PlatformSender, PlatformAttachment } from '../platform/types.js';
 import type { EffortLevel } from '../commands/effort.js';
@@ -386,7 +387,14 @@ export class TelegramHandler {
       }
     }
 
-    const result = await opencodeClient.replyQuestion(pending.request.id, answers);
+    const questionDirectory = await resolveQuestionDirectory(
+      pending.request.sessionID,
+      chatSessionStore.getSessionByConversation('telegram', conversationId)?.resolvedDirectory
+    );
+    const result = await opencodeClient.replyQuestion(pending.request.id, answers, {
+      sessionId: pending.request.sessionID,
+      ...(questionDirectory ? { directory: questionDirectory } : {}),
+    });
     if (!result.ok) {
       if (result.expired) {
         questionHandler.remove(pending.request.id);

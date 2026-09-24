@@ -19,6 +19,7 @@ import { promises as fs } from 'fs';
 
 import { ATTACHMENT_BASE_DIR, ALLOWED_ATTACHMENT_EXTENSIONS, type OpencodePartInput } from './group-types.js';
 import { getHeaderValue, extractExtension, normalizeExtension, extensionFromContentType, mimeFromExtension, sanitizeFilename } from './group-utils.js';
+import { resolveQuestionDirectory } from '../utils/question-directory.js';
 import type { QuestionSkipActionResult } from './group-types.js';
 
 export type { QuestionSkipActionResult } from './group-types.js';
@@ -214,13 +215,18 @@ export class GroupHandler {
         console.log(`[Group] 全部问题已跳过，改用 rejectQuestion: requestId=${pending.request.id.slice(0, 8)}...`);
         questionHandler.remove(pending.request.id);
         outputBuffer.touch(`chat:${chatId}`);
-        // rejectQuestion 走老路由（实测兼容 OK），sessionID 当前传 '' 即可
-        const rejectResult = await opencodeClient.rejectQuestion(pending.request.id);
+        const rejectDirectory = await resolveQuestionDirectory(
+          pending.request.sessionID,
+          chatSessionStore.getSession(chatId)?.resolvedDirectory
+        );
+        const rejectResult = await opencodeClient.rejectQuestion(pending.request.id, {
+          sessionId: pending.request.sessionID,
+          ...(rejectDirectory ? { directory: rejectDirectory } : {}),
+        });
         if (rejectResult.ok) {
           await feishuClient.reply(messageId, '✅ 已跳过本题');
         } else if (rejectResult.expired) {
-          // 跟 replyQuestion 一样的过期文案
-          await feishuClient.reply(messageId, '⚠️ 问题已过期（服务端约 60 秒后清理），跳过未生效');
+          await feishuClient.reply(messageId, '⚠️ 问题已失效（OpenCode 侧已不存在），跳过未生效');
         } else {
           await feishuClient.reply(messageId, '⚠️ 跳过失败，请重试');
         }
@@ -294,7 +300,14 @@ export class GroupHandler {
         replyMessageId || null
       );
 
-      const result = await opencodeClient.replyQuestion(pending.request.id, answers);
+      const questionDirectory = await resolveQuestionDirectory(
+        pending.request.sessionID,
+        chatSessionStore.getSession(chatId)?.resolvedDirectory
+      );
+      const result = await opencodeClient.replyQuestion(pending.request.id, answers, {
+        sessionId: pending.request.sessionID,
+        ...(questionDirectory ? { directory: questionDirectory } : {}),
+      });
 
       if (result.ok) {
           questionHandler.remove(pending.request.id);
@@ -303,20 +316,13 @@ export class GroupHandler {
           // 飞书侧"问答交互"卡片会一直挂着。
           outputBuffer.touch(`chat:${chatId}`);
       } else if (result.expired) {
-          // Bug 12：判断"用户答得快"vs"真过期"，给不同文案
-          const elapsedMs = Date.now() - pending.createdAt;
-          const wasQuick = elapsedMs < 60_000; // 60s 内都属于"答得快"
-          const quickHint = wasQuick
-            ? '你答得很快，但服务端 404 — 这是 sst/opencode 的设计限制（外部调用路径约 60-65 秒后服务端 GC）。请重发原 prompt 让问题重生，立即作答。'
-            : '服务端约 60 秒后会清理外部异步调用路径下的 question。这是 sst/opencode 设计限制，bridge 无法绕过。请重发原 prompt 让问题重生，立即作答。';
           questionHandler.remove(pending.request.id);
           outputBuffer.touch(`chat:${chatId}`);
-          await feishuClient.reply(replyMessageId, `⚠️ 问题已过期，请重新发起对话\n\n💡 ${quickHint}`);
+          await feishuClient.reply(replyMessageId, '⚠️ 问题已失效（OpenCode 侧已不存在），请重发原 prompt 让问题重生后再作答。');
       } else {
           await feishuClient.reply(replyMessageId, '⚠️ 回答提交失败，请重试');
       }
   }
-
 
   // 清除上下文
   private async handleClear(chatId: string, messageId: string): Promise<void> {
