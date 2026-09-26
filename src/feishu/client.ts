@@ -218,6 +218,11 @@ class FeishuClient extends EventEmitter {
     this.reconnectAttempt = 0;
     console.log('[飞书] 长连接已建立');
 
+    // Bug 14 v7：每次成功建立 WS 都重置入站事件基准。startInboundStallWatcher
+    // 内部只在首次启动时重置（timer 已存在则 return），重连路径走不到，
+    // 否则老时间戳会让 watchdog 立刻把每条新连接反复判定半死。
+    this.lastInboundEventAt = Date.now();
+
     // Bug 8：订阅自身 emit 的 connectionLost，触发自动重连
     // 先移除旧的监听器（performReconnect 重入 start 时避免重复订阅）
     if (this.boundOnConnectionLost) {
