@@ -21,7 +21,7 @@ describe('FeishuClient stop state reset', () => {
     internalClient.stop();
   });
 
-  it('stop 应重置卡片处理器、更新队列与事件分发器', async () => {
+  it('stop 应重置事件分发器与更新队列，但保留卡片处理器接线（Bug 17）', async () => {
     const previousDispatcher = internalClient.eventDispatcher;
     const previousHandler = vi.fn(async () => ({ msg: 'handled' }));
     const cardActionSpy = vi.fn();
@@ -33,7 +33,7 @@ describe('FeishuClient stop state reset', () => {
     internalClient.stop();
 
     expect(internalClient.eventDispatcher).not.toBe(previousDispatcher);
-    expect(internalClient.cardActionHandler).toBeUndefined();
+    expect(internalClient.cardActionHandler).toBe(previousHandler);
     expect(internalClient.cardUpdateQueue.size).toBe(0);
 
     const response = await internalClient.handleCardAction({
@@ -45,14 +45,8 @@ describe('FeishuClient stop state reset', () => {
       open_thread_id: 'ot_thread_1',
     });
 
-    expect(previousHandler).not.toHaveBeenCalled();
-    expect(cardActionSpy).toHaveBeenCalledTimes(1);
-    expect(cardActionSpy).toHaveBeenCalledWith(expect.objectContaining({
-      openId: 'ou_test_user',
-      messageId: 'om_msg_1',
-      chatId: 'oc_chat_1',
-      threadId: 'ot_thread_1',
-    }));
-    expect(response).toEqual({ msg: 'ok' });
+    expect(previousHandler).toHaveBeenCalledTimes(1);
+    expect(cardActionSpy).not.toHaveBeenCalled();
+    expect(response).toEqual({ msg: 'handled' });
   });
 });

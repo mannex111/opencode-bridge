@@ -499,6 +499,9 @@ class FeishuClient extends EventEmitter {
         return { msg: 'ok' };
       }
 
+      console.warn(
+        `[飞书] 收到卡片回调但 cardActionHandler 未设置，事件被丢弃: action=${JSON.stringify(cardEvent.action?.value ?? null).slice(0, 200)}`
+      );
       this.emit('cardAction', cardEvent);
       return { msg: 'ok' };
     } catch (error) {
@@ -1098,7 +1101,6 @@ class FeishuClient extends EventEmitter {
       this.wsClient = null;
     }
     this.eventDispatcher = this.createEventDispatcher();
-    this.cardActionHandler = undefined;
     this.cardUpdateQueue.clear();
     this.connectionState = 'disconnected';
     console.log('[飞书] 已断开连接');
@@ -1161,7 +1163,6 @@ class FeishuClient extends EventEmitter {
         this.wsClient = null;
       }
       this.eventDispatcher = this.createEventDispatcher();
-      this.cardActionHandler = undefined;
       this.cardUpdateQueue.clear();
       this.heartbeatFailureCount = 0;
 
