@@ -6,6 +6,7 @@ import {
   formatError,
   isCompletionNotFoundError,
   buildFallbackInteractiveCard,
+  sanitizeCardPayload,
   collectAttachmentsFromContent,
   extractTextFromPost,
   isRetryableError,
@@ -606,7 +607,7 @@ class FeishuClient extends EventEmitter {
           path: { message_id: messageId },
           data: {
             msg_type: 'interactive',
-            content: JSON.stringify(card),
+            content: JSON.stringify(sanitizeCardPayload(card)),
           },
         }),
         { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 3000 }
@@ -649,7 +650,7 @@ class FeishuClient extends EventEmitter {
     try {
       const data = {
         msg_type: 'interactive',
-        content: JSON.stringify(card),
+        content: JSON.stringify(sanitizeCardPayload(card)),
       } as unknown as { content: string };
       await withRetry(
         () => this.client.im.message.patch({
@@ -722,7 +723,7 @@ class FeishuClient extends EventEmitter {
           data: {
             receive_id: chatId,
             msg_type: 'interactive',
-            content: JSON.stringify(card),
+            content: JSON.stringify(sanitizeCardPayload(card)),
           },
         }),
         { maxAttempts: 3, baseDelayMs: 500, maxDelayMs: 3000 }

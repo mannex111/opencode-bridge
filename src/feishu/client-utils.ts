@@ -164,6 +164,49 @@ export async function withRetry<T>(
 // 连接状态类型
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected';
 
+// 飞书卡片会把 markdown/lark_md 里的 ![](key) 当图片解析；key 非法时整张卡构建失败
+// (230099/200570)。发送前统一把卡片内 markdown 文本的图片语法转义为纯文本，
+// 避免一处坏图片引用毁掉整张卡。
+const CARD_MARKDOWN_TAGS = new Set(['markdown', 'lark_md']);
+
+export function sanitizeCardImageSyntax(text: string): string {
+  if (!text) {
+    return text;
+  }
+  return text
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/g, (_match, alt: string, src: string) => {
+      const label = (alt || src).trim().replace(/\s+/g, ' ');
+      return label ? `🖼️ ${label}` : '🖼️';
+    })
+    .replace(/<img\b[^>]*\/?>/gi, '')
+    .replace(/<image\b[^>]*\/?>/gi, '');
+}
+
+function sanitizeCardNode(node: unknown): void {
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      sanitizeCardNode(item);
+    }
+    return;
+  }
+  if (!node || typeof node !== 'object') {
+    return;
+  }
+  const record = node as Record<string, unknown>;
+  if (typeof record.tag === 'string' && CARD_MARKDOWN_TAGS.has(record.tag) && typeof record.content === 'string') {
+    record.content = sanitizeCardImageSyntax(record.content);
+  }
+  for (const value of Object.values(record)) {
+    sanitizeCardNode(value);
+  }
+}
+
+export function sanitizeCardPayload<T>(card: T): T {
+  const clone = JSON.parse(JSON.stringify(card)) as T;
+  sanitizeCardNode(clone);
+  return clone;
+}
+
 export function buildFallbackInteractiveCard(sourceCard: object): object {
   const cardRecord = sourceCard as {
     header?: {
