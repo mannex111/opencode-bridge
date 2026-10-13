@@ -468,6 +468,34 @@ export class MessagesManager {
     options?: PermissionResponseOptions
   ): Promise<{ ok: boolean; expired?: boolean }> {
     const responseType = allow ? (remember ? 'always' : 'once') : 'reject';
+
+    if ((await detectApiDialect()) === 'v2') {
+      try {
+        const response = await fetch(
+          `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionId)}/permission/${encodeURIComponent(permissionId)}/reply`,
+          {
+            method: 'POST',
+            headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ decision: responseType }),
+          }
+        );
+        if (response.ok) {
+          return { ok: true };
+        }
+        if (response.status === 404) {
+          const detail = await response.text().catch(() => '');
+          console.warn(`[OpenCode] 权限回复 404(v2): session=${sessionId}, permission=${permissionId}, body=${detail.slice(0, 200)}`);
+          return { ok: false, expired: true };
+        }
+        const detail = await response.text().catch(() => '');
+        console.error(`[OpenCode] 权限响应失败(v2) (HTTP ${response.status} ${response.statusText}): ${detail.slice(0, 300)}`);
+        return { ok: false };
+      } catch (error) {
+        console.error('[OpenCode] 权限响应失败(v2):', error);
+        return { ok: false };
+      }
+    }
+
     const directoryCandidates = this.buildDirectoryCandidates(options);
 
     for (const directory of directoryCandidates) {
