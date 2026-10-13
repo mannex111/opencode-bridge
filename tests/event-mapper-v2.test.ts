@@ -123,4 +123,46 @@ describe('mapV2Event (OpenCode v2 -> 内部事件)', () => {
     expect(info.id).toBe(AMID);
     expect(info.cost).toBeCloseTo(0.000733452, 6);
   });
+
+  it('form.created(kind=question) -> questionAsked', () => {
+    const out = mapV2Event({
+      type: 'form.created',
+      data: {
+        form: {
+          id: 'frm_1',
+          sessionID: 'ses_x',
+          title: 'Questions',
+          metadata: { kind: 'question', tool: { messageID: 'msg_1', id: 'call_1' } },
+          fields: [
+            {
+              key: 'q0',
+              title: 'Choose A or B',
+              description: 'Which option do you want to choose?',
+              type: 'string',
+              options: [
+                { value: 'Option A', label: 'Option A', description: 'Choose option A.' },
+                { value: 'Option B', label: 'Option B', description: 'Choose option B.' },
+              ],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].type).toBe('questionAsked');
+    const payload = out[0].payload as {
+      id: string;
+      sessionID: string;
+      questions: Array<{ question: string; multiple: boolean; custom: boolean; options: Array<{ label: string }> }>;
+    };
+    expect(payload.id).toBe('frm_1');
+    expect(payload.sessionID).toBe('ses_x');
+    expect(payload.questions[0]).toMatchObject({ question: 'Choose A or B', multiple: false, custom: true });
+    expect(payload.questions[0].options.map((o) => o.label)).toEqual(['Option A', 'Option B']);
+  });
+
+  it('form.created 非 question 类型 -> 忽略', () => {
+    expect(mapV2Event({ type: 'form.created', data: { form: { id: 'f', sessionID: 's', metadata: { kind: 'other' } } } })).toEqual([]);
+  });
 });

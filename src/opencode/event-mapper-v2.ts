@@ -216,6 +216,43 @@ export function mapV2Event(event: { type?: unknown; data?: unknown }): InternalO
       }];
     }
 
+    case 'form.created': {
+      const form = asRecord(data.form);
+      if (!form) return [];
+      const metadata = asRecord(form.metadata);
+      if (!metadata || str(metadata.kind) !== 'question') return [];
+      const formSessionID = str(form.sessionID);
+      if (!formSessionID) return [];
+
+      const fields = Array.isArray(form.fields) ? form.fields : [];
+      const questions = fields.map((field) => {
+        const record = asRecord(field) ?? {};
+        const options = Array.isArray(record.options)
+          ? record.options.map((option) => {
+              const opt = asRecord(option) ?? {};
+              return { label: str(opt.label) || str(opt.value), description: str(opt.description) };
+            })
+          : [];
+        return {
+          question: str(record.title),
+          header: str(record.description) || str(record.title),
+          options,
+          multiple: str(record.type) === 'multiselect',
+          custom: record.custom === true,
+        };
+      });
+
+      return [{
+        type: 'questionAsked',
+        payload: {
+          id: str(form.id),
+          sessionID: formSessionID,
+          questions,
+          ...(metadata.tool ? { tool: metadata.tool } : {}),
+        },
+      }];
+    }
+
     default:
       return [];
   }

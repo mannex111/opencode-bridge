@@ -626,6 +626,45 @@ export class MessagesManager {
     options?: QuestionResponseOptions,
     answers?: string[][]
   ): Promise<{ ok: boolean; expired?: boolean }> {
+    if ((await detectApiDialect()) === 'v2') {
+      try {
+        const base = `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionID)}/form/${encodeURIComponent(requestId)}`;
+
+        if (action === 'reject') {
+          const response = await fetch(base, {
+            method: 'DELETE',
+            headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+          });
+          if (response.ok) return { ok: true };
+          if (response.status === 404) return { ok: false, expired: true };
+          return { ok: false };
+        }
+
+        // v2 form 字段 key 形如 q0/q1…，按问题下标构造 answer 映射
+        const answer: Record<string, unknown> = {};
+        (answers ?? []).forEach((values, index) => {
+          answer[`q${index}`] = values.length > 1 ? values : (values[0] ?? '');
+        });
+        const response = await fetch(`${base}/reply`, {
+          method: 'POST',
+          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ answer }),
+        });
+        if (response.ok) return { ok: true };
+        if (response.status === 404) {
+          const detail = await response.text().catch(() => '');
+          console.warn(`[OpenCode] 问题回复 404(v2/form): session=${sessionID}, form=${requestId}, body=${detail.slice(0, 200)}`);
+          return { ok: false, expired: true };
+        }
+        const detail = await response.text().catch(() => '');
+        console.error(`[OpenCode] 问题回复失败(v2) (HTTP ${response.status} ${response.statusText}): ${detail.slice(0, 300)}`);
+        return { ok: false };
+      } catch (error) {
+        console.error('[OpenCode] 问题回复失败(v2):', error);
+        return { ok: false };
+      }
+    }
+
     const directoryCandidates = this.buildDirectoryCandidates(options);
     const actionLabel = action === 'reply' ? '回复问题' : '拒绝问题';
 
