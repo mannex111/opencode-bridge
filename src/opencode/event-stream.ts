@@ -7,7 +7,11 @@ import {
   getFirstString,
   extractPermissionCorrelation,
   isPermissionRequestEventType,
+  withOpencodeAuthorizationHeaders,
 } from './client-helpers.js';
+import { opencodeConfig } from '../config.js';
+import { detectApiDialect } from './api-dialect.js';
+import { connectV2EventStream } from './event-source-v2.js';
 
 export interface EventStreamManagerDeps {
   getClient: () => SdkOpencodeClient | null;
@@ -107,6 +111,11 @@ export class EventStreamManager {
 
   async ensureDirectoryEventStream(directory: string): Promise<void> {
     if (!this.deps.getClient() || !this.eventListeningEnabled) {
+      return;
+    }
+
+    // v2 用单一全局 /api/event，无需按目录订阅
+    if ((await detectApiDialect()) === 'v2') {
       return;
     }
 
@@ -215,6 +224,12 @@ export class EventStreamManager {
     }
     this.eventAbortController = controller;
 
+    // v2：事件流在 /api/event（单一全局流），按方言分流；1.x 仍走原 SDK 路径，行为不变
+    if ((await detectApiDialect()) === 'v2') {
+      void this.startV2EventStream(controller);
+      return;
+    }
+
     try {
       // 2026-09-03 修复：传 signal 给 SDK（与见上注释同因）
       const events = await this.deps.getClient()!.event.subscribe({
@@ -259,6 +274,36 @@ export class EventStreamManager {
       if (!controller.signal.aborted && this.eventListeningEnabled) {
         this.scheduleReconnect('订阅失败');
       }
+    }
+  }
+
+  // v2 事件流：连接 /api/event，映射为内部事件（复用下游 hub/accumulator，不改 1.x）
+  private async startV2EventStream(controller: AbortController): Promise<void> {
+    try {
+      console.log('[OpenCode] 事件流订阅成功 (v2 /api/event)');
+      this.eventReconnectAttempt = 0;
+      await connectV2EventStream(
+        {
+          baseUrl: opencodeConfig.baseUrl,
+          headers: withOpencodeAuthorizationHeaders(),
+          onInternalEvent: (event) => this.deps.emitEvent(event.type, event.payload),
+          onError: (error) => console.error('[OpenCode] v2 事件流错误:', error),
+        },
+        controller.signal
+      );
+      if (!controller.signal.aborted && this.eventListeningEnabled) {
+        this.scheduleReconnect('v2 事件流已结束');
+      }
+    } catch (error) {
+      if (!controller.signal.aborted && this.eventListeningEnabled) {
+        console.error('[OpenCode] v2 事件流中断:', error);
+        this.scheduleReconnect('v2 事件流中断');
+      }
+    } finally {
+      if (this.eventAbortController === controller) {
+        this.eventAbortController = null;
+      }
+      this.eventStreamActive = false;
     }
   }
 
