@@ -2,6 +2,15 @@ import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { Session, Project, Message, Part } from '@opencode-ai/sdk';
 import type { SessionQueryOptions } from './client.js';
 import { formatSdkError, appendAuthHint } from './client-helpers.js';
+import { detectApiDialect } from './api-dialect.js';
+import {
+  createV2Session,
+  deleteV2Session,
+  getV2Session,
+  getV2SessionDirectory,
+  listV2Sessions,
+  type V2SessionInfo,
+} from './sessions-v2.js';
 
 export interface SessionsDeps {
   getClient: () => SdkOpencodeClient | null;
@@ -35,8 +44,17 @@ export class SessionsManager {
 
   // 获取会话列表（可按目录过滤）
   async listSessions(options?: SessionQueryOptions): Promise<Session[]> {
-    const client = this.getClient();
     const directory = this.deps.rememberDirectory(options?.directory);
+
+    if ((await detectApiDialect()) === 'v2') {
+      const sessions = (await listV2Sessions()).map((s) => this.toSession(s));
+      for (const session of sessions) {
+        this.deps.rememberDirectory(session.directory);
+      }
+      return sessions;
+    }
+
+    const client = this.getClient();
     const result = await client.session.list(
       directory ? { query: { directory } } : undefined
     );
@@ -148,12 +166,24 @@ export class SessionsManager {
 
   // 通过 ID 获取会话（可按目录限定）
   async getSessionById(sessionId: string, options?: SessionQueryOptions): Promise<Session | null> {
-    const client = this.getClient();
     const normalizedSessionId = sessionId.trim();
     if (!normalizedSessionId) {
       return null;
     }
 
+    if ((await detectApiDialect()) === 'v2') {
+      const session = await getV2Session(normalizedSessionId);
+      if (!session) {
+        return null;
+      }
+      const mapped = this.toSession(session);
+      if (mapped.directory) {
+        this.deps.rememberDirectory(mapped.directory);
+      }
+      return mapped;
+    }
+
+    const client = this.getClient();
     const directory = this.deps.rememberDirectory(options?.directory);
     const result = await client.session.get({
       path: { id: normalizedSessionId },
@@ -245,11 +275,27 @@ export class SessionsManager {
 
   // 创建新会话
   async createSession(title?: string, directory?: string): Promise<Session> {
-    const client = this.getClient();
     const normalizedDir = this.deps.rememberDirectory(directory);
     if (normalizedDir) {
       void this.deps.ensureDirectoryEventStream(normalizedDir);
     }
+
+    if ((await detectApiDialect()) === 'v2') {
+      const session = await createV2Session({
+        title: title || '新对话',
+        ...(normalizedDir ? { directory: normalizedDir } : {}),
+      });
+      if (!session) {
+        throw new Error('创建会话失败 (v2)');
+      }
+      const mapped = this.toSession(session);
+      if (mapped.directory) {
+        this.deps.rememberDirectory(mapped.directory);
+      }
+      return mapped;
+    }
+
+    const client = this.getClient();
     const result = await client.session.create({
       body: { title: title || '新对话' },
       ...(normalizedDir ? { query: { directory: normalizedDir } } : {}),
@@ -294,6 +340,14 @@ export class SessionsManager {
 
   // 删除会话
   async deleteSession(sessionId: string, options?: SessionQueryOptions): Promise<boolean> {
+    if ((await detectApiDialect()) === 'v2') {
+      const ok = await deleteV2Session(sessionId);
+      if (ok) {
+        console.log(`[OpenCode] 已删除会话(v2): ${sessionId}`);
+      }
+      return ok;
+    }
+
     const client = this.getClient();
     try {
       const directory = this.deps.normalizeDirectory(options?.directory);
@@ -316,6 +370,14 @@ export class SessionsManager {
       path: { id: sessionId },
     });
     return result.data || [];
+  }
+
+  private toSession(v2: V2SessionInfo): Session {
+    const directory = getV2SessionDirectory(v2);
+    return {
+      ...v2,
+      ...(directory ? { directory } : {}),
+    } as unknown as Session;
   }
 
   async getSessionLastActivityTime(sessionId: string): Promise<number> {
