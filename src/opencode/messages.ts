@@ -2,6 +2,7 @@ import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { Message, Part } from '@opencode-ai/sdk';
 import type { DirectoryResponseOptions, PermissionResponseOptions, QuestionResponseOptions, ShellExecutionResult } from './client.js';
 import { opencodeConfig, modelConfig } from '../config.js';
+import { detectApiDialect } from './api-dialect.js';
 import {
   withOpencodeAuthorizationHeaders,
   appendAuthHint,
@@ -131,6 +132,12 @@ export class MessagesManager {
     }
   ): Promise<void> {
     this.getClient();
+
+    if ((await detectApiDialect()) === 'v2') {
+      await this.sendPromptV2(sessionId, [{ type: 'text', text }], options);
+      return;
+    }
+
     const model = this.resolveModelOption(options);
 
     if (options?.directory) {
@@ -173,6 +180,11 @@ export class MessagesManager {
     const model = this.resolveModelOption(options);
     const resolvedParts = await inlineLocalUploadParts(parts);
 
+    if ((await detectApiDialect()) === 'v2') {
+      await this.sendPromptV2(sessionId, resolvedParts, options);
+      return;
+    }
+
     if (options?.directory) {
       void this.deps.ensureDirectoryEventStream(options.directory);
     }
@@ -194,6 +206,56 @@ export class MessagesManager {
       const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
       const message = `prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`;
       throw new Error(appendAuthHint(message, response.status));
+    }
+  }
+
+  // v2：POST /api/session/{id}/prompt（异步 fire-and-forget；model 先经 /api/session/{id}/model 设置）
+  private async sendPromptV2(
+    sessionId: string,
+    parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>,
+    options?: { providerId?: string; modelId?: string; agent?: string; variant?: string; directory?: string }
+  ): Promise<void> {
+    const model = this.resolveModelOption(options);
+    if (model) {
+      const modelRes = await fetch(`${opencodeConfig.baseUrl}/api/session/${sessionId}/model`, {
+        method: 'POST',
+        headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          model: {
+            id: model.modelID,
+            providerID: model.providerID,
+            ...(options?.variant ? { variant: options.variant } : {}),
+          },
+        }),
+      });
+      if (!modelRes.ok) {
+        const detail = await modelRes.text().catch(() => '');
+        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+        throw new Error(appendAuthHint(`设置模型失败 (${modelRes.status} ${modelRes.statusText})${suffix}`, modelRes.status));
+      }
+    }
+
+    const text = parts
+      .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
+      .map((p) => p.text)
+      .join('\n');
+    const files = parts
+      .filter((p): p is { type: 'file'; mime: string; url: string; filename?: string } => p.type === 'file')
+      .map((p) => ({ uri: p.url, ...(p.filename ? { name: p.filename } : {}) }));
+
+    const response = await fetch(`${opencodeConfig.baseUrl}/api/session/${sessionId}/prompt`, {
+      method: 'POST',
+      headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        text,
+        ...(files.length ? { files } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+      throw new Error(appendAuthHint(`prompt 请求失败 (${response.status} ${response.statusText})${suffix}`, response.status));
     }
   }
 
