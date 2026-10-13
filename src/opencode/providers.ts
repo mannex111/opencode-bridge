@@ -1,6 +1,8 @@
 import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { OpencodeRuntimeConfig, OpencodeAgentInfo, AgentMode } from './client.js';
 import { parseBoolean, parseAgentMode } from './client-helpers.js';
+import { detectApiDialect } from './api-dialect.js';
+import { getV2Config, listV2Agents, listV2Providers } from './resources-v2.js';
 
 export interface ProvidersDeps {
   getClient: () => SdkOpencodeClient | null;
@@ -23,6 +25,13 @@ export class ProvidersManager {
     providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;
     default: Record<string, string>;
   }> {
+    if ((await detectApiDialect()) === 'v2') {
+      const providers = await listV2Providers();
+      return {
+        providers: providers as unknown as Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>,
+        default: {},
+      };
+    }
     const client = this.getClient();
     const result = await client.config.providers();
     return result.data as unknown as {
@@ -42,6 +51,10 @@ export class ProvidersManager {
     providers: Array<Record<string, unknown>>;
     default: Record<string, string>;
   }> {
+    if ((await detectApiDialect()) === 'v2') {
+      const providers = await listV2Providers();
+      return { providers: providers as Array<Record<string, unknown>>, default: {} };
+    }
     const client = this.getClient();
     const result = await client.config.providers();
     const data = (result.data || {}) as Record<string, unknown>;
@@ -175,6 +188,9 @@ export class ProvidersManager {
 
   // 获取完整配置
   async getConfig(): Promise<OpencodeRuntimeConfig> {
+    if ((await detectApiDialect()) === 'v2') {
+      return ((await getV2Config()) || {}) as OpencodeRuntimeConfig;
+    }
     const client = this.getClient();
     const result = await client.config.get();
     return (result.data || {}) as OpencodeRuntimeConfig;
@@ -196,9 +212,14 @@ export class ProvidersManager {
 
   // 获取可用 Agent 列表
   async getAgents(): Promise<OpencodeAgentInfo[]> {
-    const client = this.getClient();
-    const result = await client.app.agents();
-    const rawAgents = Array.isArray(result.data) ? result.data : [];
+    let rawAgents: unknown[];
+    if ((await detectApiDialect()) === 'v2') {
+      rawAgents = await listV2Agents();
+    } else {
+      const client = this.getClient();
+      const result = await client.app.agents();
+      rawAgents = Array.isArray(result.data) ? result.data : [];
+    }
     const agents: OpencodeAgentInfo[] = [];
 
     for (const item of rawAgents) {

@@ -1,5 +1,7 @@
 import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { OpencodeCommandInfo } from './client.js';
+import { detectApiDialect } from './api-dialect.js';
+import { listV2Commands } from './resources-v2.js';
 
 export interface CommandCacheManagerDeps {
   getClient: () => SdkOpencodeClient | null;
@@ -36,6 +38,12 @@ export class CommandCacheManager {
 
     // 3. 调用 API 获取命令列表
     try {
+      if ((await detectApiDialect()) === 'v2') {
+        const commands = (await listV2Commands()) as unknown as OpencodeCommandInfo[];
+        this.commandsCache = commands;
+        this.commandsCacheTimestamp = now;
+        return commands;
+      }
       const client = this.deps.getClient();
       if (!client) {
         throw new Error('OpenCode客户端未连接');
@@ -57,6 +65,9 @@ export class CommandCacheManager {
 
   // 检查 OpenCode 版本兼容性
   async checkOpenCodeVersion(): Promise<boolean> {
+    if ((await detectApiDialect()) === 'v2') {
+      return true;
+    }
     try {
       const client = this.deps.getClient();
       if (!client) {
