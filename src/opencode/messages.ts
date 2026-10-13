@@ -394,6 +394,22 @@ export class MessagesManager {
 
   // 中断会话执行
   async abortSession(sessionId: string): Promise<boolean> {
+    if ((await detectApiDialect()) === 'v2') {
+      try {
+        const response = await fetch(
+          `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionId)}/interrupt`,
+          {
+            method: 'POST',
+            headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+          }
+        );
+        return response.ok;
+      } catch (error) {
+        console.error('[OpenCode] 中断会话失败(v2):', error);
+        return false;
+      }
+    }
+
     const client = this.getClient();
 
     try {
