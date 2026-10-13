@@ -62,6 +62,11 @@ export class MessagesManager {
       directory?: string;
     }
   ): Promise<{ info: Message; parts: Part[] }> {
+    if ((await detectApiDialect()) === 'v2') {
+      const inbox = await this.sendPromptV2(sessionId, [{ type: 'text', text }], options);
+      return { info: (inbox ?? { sessionID: sessionId }) as Message, parts: [] };
+    }
+
     const client = this.getClient();
     const model = this.resolveModelOption(options);
 
@@ -96,6 +101,12 @@ export class MessagesManager {
     },
     messageId?: string
   ): Promise<{ info: Message; parts: Part[] }> {
+    if ((await detectApiDialect()) === 'v2') {
+      const v2Parts = await inlineLocalUploadParts(parts);
+      const inbox = await this.sendPromptV2(sessionId, v2Parts, options);
+      return { info: (inbox ?? { sessionID: sessionId }) as Message, parts: [] };
+    }
+
     const client = this.getClient();
     const model = this.resolveModelOption(options);
     const resolvedParts = await inlineLocalUploadParts(parts);
@@ -214,7 +225,7 @@ export class MessagesManager {
     sessionId: string,
     parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>,
     options?: { providerId?: string; modelId?: string; agent?: string; variant?: string; directory?: string }
-  ): Promise<void> {
+  ): Promise<unknown | null> {
     const model = this.resolveModelOption(options);
     if (model) {
       const modelRes = await fetch(`${opencodeConfig.baseUrl}/api/session/${sessionId}/model`, {
@@ -257,6 +268,8 @@ export class MessagesManager {
       const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
       throw new Error(appendAuthHint(`prompt 请求失败 (${response.status} ${response.statusText})${suffix}`, response.status));
     }
+
+    return ((await response.json().catch(() => null)) as { data?: unknown } | null)?.data ?? null;
   }
 
   // 发送命令
