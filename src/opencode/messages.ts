@@ -356,6 +356,23 @@ export class MessagesManager {
   }
 
   async summarizeSession(sessionId: string, providerId: string, modelId: string): Promise<boolean> {
+    if ((await detectApiDialect()) === 'v2') {
+      const response = await fetch(
+        `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionId)}/compact`,
+        {
+          method: 'POST',
+          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({}),
+        }
+      );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+        throw new Error(appendAuthHint(`会话压缩失败 (${response.status} ${response.statusText})${suffix}`, response.status));
+      }
+      return true;
+    }
+
     const client = this.getClient();
     const result = await client.session.summarize({
       path: { id: sessionId },
@@ -379,6 +396,33 @@ export class MessagesManager {
 
   // 撤回消息
   async revertMessage(sessionId: string, messageId: string): Promise<boolean> {
+    if ((await detectApiDialect()) === 'v2') {
+      try {
+        const stage = await fetch(
+          `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionId)}/revert/stage`,
+          {
+            method: 'POST',
+            headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ messageID: messageId }),
+          }
+        );
+        if (!stage.ok) {
+          return false;
+        }
+        const commit = await fetch(
+          `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionId)}/revert/commit`,
+          {
+            method: 'POST',
+            headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+          }
+        );
+        return commit.ok;
+      } catch (error) {
+        console.error('[OpenCode] 撤回消息失败(v2):', error);
+        return false;
+      }
+    }
+
     const client = this.getClient();
     try {
       const result = await client.session.revert({
