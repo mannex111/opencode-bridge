@@ -8,7 +8,10 @@ import {
   deleteV2Session,
   getV2Session,
   getV2SessionDirectory,
+  getV2SessionMessages,
+  listV2Projects,
   listV2Sessions,
+  updateV2Session,
   type V2SessionInfo,
 } from './sessions-v2.js';
 
@@ -34,6 +37,9 @@ export class SessionsManager {
 
   // 获取工作区列表
   async listProjects(options?: SessionQueryOptions): Promise<Project[]> {
+    if ((await detectApiDialect()) === 'v2') {
+      return (await listV2Projects()) as unknown as Project[];
+    }
     const client = this.getClient();
     const directory = this.deps.normalizeDirectory(options?.directory);
     const result = await client.project.list(
@@ -254,6 +260,18 @@ export class SessionsManager {
 
   // 获取或创建会话
   async getOrCreateSession(title?: string): Promise<Session> {
+    if ((await detectApiDialect()) === 'v2') {
+      const existing = await listV2Sessions();
+      if (existing.length > 0) {
+        return this.toSession(existing[0]);
+      }
+      const created = await createV2Session({ title: title || '飞书对话' });
+      if (!created) {
+        throw new Error('创建会话失败 (v2)');
+      }
+      return this.toSession(created);
+    }
+
     const client = this.getClient();
 
     // 尝试获取现有会话列表
@@ -308,13 +326,17 @@ export class SessionsManager {
 
   // 更新会话标题
   async updateSession(sessionId: string, title: string): Promise<boolean> {
-    const client = this.getClient();
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       console.warn('[OpenCode] updateSession: 标题不能为空');
       return false;
     }
 
+    if ((await detectApiDialect()) === 'v2') {
+      return updateV2Session(sessionId, trimmedTitle);
+    }
+
+    const client = this.getClient();
     try {
       const result = await client.session.update({
         path: { id: sessionId },
@@ -365,6 +387,9 @@ export class SessionsManager {
 
   // 获取会话消息
   async getSessionMessages(sessionId: string): Promise<Array<{ info: Message; parts: Part[] }>> {
+    if ((await detectApiDialect()) === 'v2') {
+      return (await getV2SessionMessages(sessionId)) as unknown as Array<{ info: Message; parts: Part[] }>;
+    }
     const client = this.getClient();
     const result = await client.session.messages({
       path: { id: sessionId },

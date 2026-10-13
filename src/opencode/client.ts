@@ -7,6 +7,7 @@ import {
   withOpencodeAuthorizationHeaders,
   appendAuthHint,
 } from './client-helpers.js';
+import { detectApiDialect } from './api-dialect.js';
 import { EventStreamManager } from './event-stream.js';
 import { CommandCacheManager } from './command-cache.js';
 import { ProvidersManager } from './providers.js';
@@ -141,6 +142,26 @@ class OpencodeClientWrapper extends EventEmitter {
         baseUrl: opencodeConfig.baseUrl,
         headers: withOpencodeAuthorizationHeaders(),
       });
+
+      if ((await detectApiDialect()) === 'v2') {
+        const response = await fetch(`${opencodeConfig.baseUrl}/api/config`, {
+          method: 'GET',
+          headers: withOpencodeAuthorizationHeaders(),
+        });
+        if (!response.ok) {
+          const reason = appendAuthHint(`OpenCode 连接失败（HTTP ${response.status}）`, response.status);
+          console.error(`[OpenCode] ${reason}`);
+          this.scheduleConnectRetry();
+          return false;
+        }
+        console.log('[OpenCode] 已连接 (v2)');
+        this.connectRetryAttempt = 0;
+        this.eventStreamManager.setListeningEnabled(true);
+        this.eventStreamManager.resetReconnectAttempt();
+        void this.eventStreamManager.start();
+        void this.subscribeToKnownDirectories();
+        return true;
+      }
 
       // 通过获取会话列表来检查服务器状态
       const result = await this.client.session.list();

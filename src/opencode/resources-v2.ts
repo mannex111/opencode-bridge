@@ -78,3 +78,19 @@ export async function getV2Config(): Promise<unknown | null> {
     return null;
   }
 }
+
+export async function updateV2Config(config: unknown): Promise<unknown | null> {
+  try {
+    const response = await fetch(`${opencodeConfig.baseUrl}/api/experimental/config`, {
+      method: 'PATCH',
+      headers: v2Headers(),
+      body: JSON.stringify(config),
+    });
+    if (!response.ok) {
+      return null;
+    }
+    return await response.json().catch(() => null);
+  } catch {
+    return null;
+  }
+}

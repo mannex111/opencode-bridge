@@ -266,6 +266,24 @@ export class MessagesManager {
     args: string,
     options?: { directory?: string }
   ): Promise<{ info: Message; parts: Part[] }> {
+    if ((await detectApiDialect()) === 'v2') {
+      const response = await fetch(
+        `${opencodeConfig.baseUrl}/api/session/${encodeURIComponent(sessionId)}/command`,
+        {
+          method: 'POST',
+          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ name: command, text: args }),
+        }
+      );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+        throw new Error(appendAuthHint(`OpenCode 命令调用失败 (${response.status} ${response.statusText})${suffix}`, response.status));
+      }
+      const payload = (await response.json().catch(() => null)) as { data?: { info?: Message; parts?: Part[] } } | null;
+      return (payload?.data ?? { parts: [] }) as { info: Message; parts: Part[] };
+    }
+
     const client = this.getClient();
 
     if (options?.directory) {

@@ -2,7 +2,7 @@ import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { OpencodeRuntimeConfig, OpencodeAgentInfo, AgentMode } from './client.js';
 import { parseBoolean, parseAgentMode } from './client-helpers.js';
 import { detectApiDialect } from './api-dialect.js';
-import { getV2Config, listV2Agents, listV2Providers } from './resources-v2.js';
+import { getV2Config, listV2Agents, listV2Providers, updateV2Config } from './resources-v2.js';
 
 export interface ProvidersDeps {
   getClient: () => SdkOpencodeClient | null;
@@ -198,6 +198,9 @@ export class ProvidersManager {
 
   // 更新完整配置
   async updateConfig(config: OpencodeRuntimeConfig): Promise<OpencodeRuntimeConfig | null> {
+    if ((await detectApiDialect()) === 'v2') {
+      return (await updateV2Config(config)) as OpencodeRuntimeConfig | null;
+    }
     const client = this.getClient();
     try {
       const result = await client.config.update({

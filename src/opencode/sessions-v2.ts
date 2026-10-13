@@ -92,3 +92,44 @@ export async function deleteV2Session(id: string): Promise<boolean> {
 export function getV2SessionDirectory(session: V2SessionInfo): string | undefined {
   return extractDirectory(session);
 }
+
+export interface V2ProjectInfo {
+  id?: string;
+  worktree?: string;
+  directory?: string;
+  [key: string]: unknown;
+}
+
+export async function listV2Projects(): Promise<V2ProjectInfo[]> {
+  const response = await fetch(v2Url('/project'), { method: 'GET', headers: v2Headers() });
+  if (!response.ok) {
+    return [];
+  }
+  const json = (await response.json().catch(() => null)) as unknown;
+  const record = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+  const data = record?.data ?? json;
+  return Array.isArray(data) ? (data as V2ProjectInfo[]) : [];
+}
+
+export async function updateV2Session(id: string, title: string): Promise<boolean> {
+  const response = await fetch(v2Url(`/session/${encodeURIComponent(id)}`), {
+    method: 'PATCH',
+    headers: v2Headers(),
+    body: JSON.stringify({ title }),
+  });
+  return response.ok;
+}
+
+export async function getV2SessionMessages(id: string): Promise<Array<{ info?: unknown; parts?: unknown }>> {
+  const response = await fetch(v2Url(`/session/${encodeURIComponent(id)}/message`), {
+    method: 'GET',
+    headers: v2Headers(),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const json = (await response.json().catch(() => null)) as unknown;
+  const record = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+  const data = record?.data ?? json;
+  return Array.isArray(data) ? (data as Array<{ info?: unknown; parts?: unknown }>) : [];
+}
