@@ -35,6 +35,10 @@ const isDev = process.env.NODE_ENV === 'development' || !(process as any).resour
  * 包括：cmd/git bash/powershell/Electron 等各种方式启动的进程
  */
 function killOldBridgeProcesses(): void {
+  if (process.env.OPENCODE_BRIDGE_SKIP_KILL === '1') {
+    console.log('[Admin] 跳过终止旧 Bridge 进程 (OPENCODE_BRIDGE_SKIP_KILL=1)');
+    return;
+  }
   // 获取脚本路径（兼容开发环境和 Electron 打包环境）
   let scriptPath: string;
   if ((process as any).resourcesPath && !isDev) {

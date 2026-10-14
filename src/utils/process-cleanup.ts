@@ -60,6 +60,10 @@ export function findOpenCodeProcesses(): number[] {
  * 清理 Bridge 进程（排除当前进程）
  */
 export async function cleanupStaleProcesses(): Promise<void> {
+  if (process.env.OPENCODE_BRIDGE_SKIP_KILL === '1') {
+    console.log('[process-cleanup] 跳过 kill-bridge (OPENCODE_BRIDGE_SKIP_KILL=1)');
+    return;
+  }
   const currentPid = process.pid;
   const result = runProcessManager(['kill-bridge', '--exclude-pid', String(currentPid)]);
   if (result.stdout) {
@@ -74,6 +78,10 @@ export async function cleanupStaleProcesses(): Promise<void> {
  * 清理 OpenCode 进程
  */
 export async function cleanupOpenCodeProcesses(): Promise<void> {
+  if (process.env.OPENCODE_BRIDGE_SKIP_KILL === '1') {
+    console.log('[process-cleanup] 跳过 kill-opencode (OPENCODE_BRIDGE_SKIP_KILL=1)');
+    return;
+  }
   const result = runProcessManager(['kill-opencode']);
   if (result.stdout) {
     console.log(result.stdout.trim());
