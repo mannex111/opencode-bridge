@@ -2,7 +2,7 @@ import type { OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { OpencodeRuntimeConfig, OpencodeAgentInfo, AgentMode } from './client.js';
 import { parseBoolean, parseAgentMode } from './client-helpers.js';
 import { detectApiDialect } from './api-dialect.js';
-import { getV2Config, listV2Agents, listV2Providers, updateV2Config } from './resources-v2.js';
+import { getV2Config, listV2Agents, listV2Models, listV2Providers, updateV2Config } from './resources-v2.js';
 
 export interface ProvidersDeps {
   getClient: () => SdkOpencodeClient | null;
@@ -26,11 +26,21 @@ export class ProvidersManager {
     default: Record<string, string>;
   }> {
     if ((await detectApiDialect()) === 'v2') {
-      const providers = await listV2Providers();
-      return {
-        providers: providers as unknown as Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>,
-        default: {},
-      };
+      const [providers, models] = await Promise.all([listV2Providers(), listV2Models()]);
+      const modelsByProvider = new Map<string, Array<{ id: string; name: string }>>();
+      for (const model of models) {
+        const providerId = typeof model.providerID === 'string' ? model.providerID : '';
+        if (!providerId) continue;
+        const list = modelsByProvider.get(providerId) ?? [];
+        list.push({ id: String(model.modelID ?? model.id ?? ''), name: String(model.name ?? model.modelID ?? '') });
+        modelsByProvider.set(providerId, list);
+      }
+      const shaped = providers.map((p) => ({
+        id: String(p.id),
+        name: String(p.name ?? p.id),
+        models: modelsByProvider.get(String(p.id)) ?? [],
+      }));
+      return { providers: shaped, default: {} };
     }
     const client = this.getClient();
     const result = await client.config.providers();
@@ -52,8 +62,17 @@ export class ProvidersManager {
     default: Record<string, string>;
   }> {
     if ((await detectApiDialect()) === 'v2') {
-      const providers = await listV2Providers();
-      return { providers: providers as Array<Record<string, unknown>>, default: {} };
+      const [providers, models] = await Promise.all([listV2Providers(), listV2Models()]);
+      const byProvider = new Map<string, unknown[]>();
+      for (const model of models) {
+        const providerId = typeof model.providerID === 'string' ? model.providerID : '';
+        if (!providerId) continue;
+        const list = byProvider.get(providerId) ?? [];
+        list.push(model);
+        byProvider.set(providerId, list);
+      }
+      const shaped = providers.map((p) => ({ ...p, models: byProvider.get(String(p.id)) ?? [] }));
+      return { providers: shaped as Array<Record<string, unknown>>, default: {} };
     }
     const client = this.getClient();
     const result = await client.config.providers();

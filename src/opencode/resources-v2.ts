@@ -56,6 +56,19 @@ export async function listV2Providers(): Promise<V2ProviderInfo[]> {
   return v2GetData<V2ProviderInfo>('/provider');
 }
 
+export interface V2ModelInfo {
+  id?: string;
+  modelID?: string;
+  providerID?: string;
+  name?: string;
+  [key: string]: unknown;
+}
+
+/** v2 的模型列表在独立端点 /api/model（provider 里不带 models） */
+export async function listV2Models(): Promise<V2ModelInfo[]> {
+  return v2GetData<V2ModelInfo>('/model');
+}
+
 export async function listV2Agents(): Promise<V2AgentInfo[]> {
   return v2GetData<V2AgentInfo>('/agent');
 }
