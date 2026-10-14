@@ -179,11 +179,33 @@ export function buildPermissionQueueKeyBySession(sessionId: string, conversation
 // ── 错误格式化 ─────────────────────────────────────
 
 export function formatProviderError(raw: unknown): string {
+  if (typeof raw === 'string') {
+    return raw.trim() || '模型执行失败';
+  }
   if (!raw || typeof raw !== 'object') {
     return '模型执行失败';
   }
 
-  const error = raw as { name?: unknown; data?: Record<string, unknown> };
+  const error = raw as { name?: unknown; type?: unknown; message?: unknown; data?: Record<string, unknown> };
+
+  // OpenCode v2 错误形状：{ type: 'AI.Error.QuotaExceeded' | 'provider.auth' | ..., message }
+  if (typeof error.name !== 'string' && (typeof error.type === 'string' || typeof error.message === 'string')) {
+    const type = typeof error.type === 'string' ? error.type : '';
+    const message = typeof error.message === 'string' && error.message.trim() ? error.message.trim() : '';
+    const lowered = `${type} ${message}`.toLowerCase();
+    const label = /quota|insufficient (account )?funds/.test(lowered)
+      ? '额度不足'
+      : lowered.includes('auth')
+        ? '鉴权失败'
+        : lowered.includes('abort')
+          ? '已中断'
+          : '';
+    if (label && message) return `${label}：${message}`;
+    if (message) return message;
+    if (label) return label;
+    return type || '模型执行失败';
+  }
+
   const name = typeof error.name === 'string' ? error.name : 'UnknownError';
   const data = error.data && typeof error.data === 'object' ? error.data : {};
 
