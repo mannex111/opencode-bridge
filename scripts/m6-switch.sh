@@ -22,7 +22,7 @@ cp -f "$BIN_DIR/opencode" "$BIN_DIR/opencode.v1.bak.$TS" || fail "备份 v1 二�
 [ -s "$BIN_DIR/opencode.v1.bak.$TS" ] || fail "v1 二进制备份为空"
 [ -f "$BIN_DIR/opencode2" ] && cp -f "$BIN_DIR/opencode2" "$BIN_DIR/opencode2.v1.bak.$TS" 2>/dev/null || true
 # 注意：v2 走 npm @opencode/cli（opencode.ai/v2/install）；v1 的 `upgrade <version>` 走 GitHub releases，v2 无 release，必失败
-"$OC" upgrade --major || fail "v2 升级失败"
+timeout 600 "$OC" upgrade --major || fail "v2 升级失败/超时（确认是否非交互）"
 VER=$("$OC" --version 2>&1 | head -1); log "  版本: $VER"
 echo "$VER" | grep -qE "2\.[0-9]" || fail "版本非 2.x ($VER)"
 
