@@ -34,22 +34,38 @@ function v2Headers(): Record<string, string> {
   return withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' });
 }
 
+const V2_GET_TIMEOUT_MS = 8000;
+const V2_GET_RETRIES = 1;
+
 async function v2GetData<T>(path: string): Promise<T[]> {
-  try {
-    const response = await fetch(`${opencodeConfig.baseUrl}/api${path}`, {
-      method: 'GET',
-      headers: v2Headers(),
-    });
-    if (!response.ok) {
-      return [];
+  const url = `${opencodeConfig.baseUrl}/api${path}`;
+  let lastError = 'unknown';
+  for (let attempt = 0; attempt <= V2_GET_RETRIES; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: v2Headers(),
+        signal: AbortSignal.timeout(V2_GET_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        const json = (await response.json().catch(() => null)) as unknown;
+        const record = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
+        const data = record?.data ?? json;
+        return Array.isArray(data) ? (data as T[]) : [];
+      }
+      lastError = `HTTP ${response.status} ${response.statusText}`;
+      // 4xx 是确定性错误（鉴权/路径错），重试无意义；5xx 值得再试一次
+      if (response.status < 500) {
+        break;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
     }
-    const json = (await response.json().catch(() => null)) as unknown;
-    const record = json && typeof json === 'object' ? (json as Record<string, unknown>) : null;
-    const data = record?.data ?? json;
-    return Array.isArray(data) ? (data as T[]) : [];
-  } catch {
-    return [];
   }
+  // 以前这里静默返回 []，导致「面板模型/角色下拉为空」且没有任何线索。
+  // 现在明确记录：常见原因是服务端关闭了空闲 keep-alive 连接后首个请求拿到死 socket。
+  console.warn(`[OpenCode] v2 GET ${path} 失败(重试 ${V2_GET_RETRIES} 次后): ${lastError}`);
+  return [];
 }
 
 export async function listV2Providers(): Promise<V2ProviderInfo[]> {

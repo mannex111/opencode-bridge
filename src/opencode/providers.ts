@@ -8,8 +8,18 @@ export interface ProvidersDeps {
   getClient: () => SdkOpencodeClient | null;
 }
 
+interface ProvidersSnapshot {
+  providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;
+  default: Record<string, string>;
+}
+
 export class ProvidersManager {
   constructor(private deps: ProvidersDeps) {}
+
+  // 上一次成功的 provider/agent 列表。OpenCode 侧瞬时不可用（服务端关掉空闲
+  // keep-alive 连接、实例冷启动等）时兜底，避免面板模型/角色下拉直接变空。
+  private lastGoodProviders: ProvidersSnapshot | null = null;
+  private lastGoodAgents: OpencodeAgentInfo[] | null = null;
 
   // 获取客户端实例
   private getClient(): SdkOpencodeClient {
@@ -40,14 +50,28 @@ export class ProvidersManager {
         name: String(p.name ?? p.id),
         models: modelsByProvider.get(String(p.id)) ?? [],
       }));
+      if (shaped.length > 0) {
+        this.lastGoodProviders = { providers: shaped, default: {} };
+        return this.lastGoodProviders;
+      }
+      if (this.lastGoodProviders) {
+        console.warn(
+          `[OpenCode] provider 列表为空(${providers.length} provider / ${models.length} model)，使用上一次成功结果兜底`
+        );
+        return this.lastGoodProviders;
+      }
       return { providers: shaped, default: {} };
     }
     const client = this.getClient();
     const result = await client.config.providers();
-    return result.data as unknown as {
-      providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;
-      default: Record<string, string>;
-    };
+    const snapshot = result.data as unknown as ProvidersSnapshot;
+    if (snapshot?.providers?.length) {
+      this.lastGoodProviders = snapshot;
+    } else if (this.lastGoodProviders) {
+      console.warn('[OpenCode] provider 列表为空，使用上一次成功结果兜底');
+      return this.lastGoodProviders;
+    }
+    return snapshot;
   }
 
   /**
@@ -268,6 +292,14 @@ export class ProvidersManager {
       });
     }
 
+    if (agents.length > 0) {
+      this.lastGoodAgents = agents;
+      return agents;
+    }
+    if (this.lastGoodAgents) {
+      console.warn('[OpenCode] agent 列表为空，使用上一次成功结果兜底');
+      return this.lastGoodAgents;
+    }
     return agents;
   }
 }
