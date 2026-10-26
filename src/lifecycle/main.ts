@@ -95,45 +95,72 @@ export async function main(
       const pathMod = await import('node:path');
       const isWindows = process.platform === 'win32';
 
-      // 确定 process-manager 路径（兼容开发/打包两种环境）
+      // 确定 process-manager 路径（兼容开发/打包/编译产物多种布局）
       // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
       const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
+      const fsMod = await import('node:fs');
       let processManagerPath: string;
       if ((process as any).resourcesPath && !isDev) {
         // Electron 打包后：scripts 在 resources/app/scripts/
         processManagerPath = pathMod.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
       } else {
-        // 开发环境：src/index.ts 位于项目根下的 src/；构建后：dist/index.js 位于项目根下的 dist/
-        // 这两种布局到项目根的相对层级一致，因此统一回退一层即可定位 scripts/。
+        // 源码在 src/lifecycle/、编译产物在 dist/lifecycle/，到项目根都是两层；
+        // 但这里不写死层数——从当前文件目录逐级向上找 scripts/process-manager.mjs。
+        // （此前写死 '../scripts'，在 dist/lifecycle/ 下会解析成不存在的 dist/scripts/，
+        //   导致启动时刷 "Cannot find module .../dist/scripts/process-manager.mjs"。）
         const selfDir = pathMod.dirname(fileURLToPath(import.meta.url));
-        processManagerPath = pathMod.resolve(selfDir, '../scripts/process-manager.mjs');
+        processManagerPath = '';
+        let dir = selfDir;
+        for (let depth = 0; depth < 6; depth++) {
+          const candidate = pathMod.join(dir, 'scripts', 'process-manager.mjs');
+          if (fsMod.existsSync(candidate)) {
+            processManagerPath = candidate;
+            break;
+          }
+          const parent = pathMod.dirname(dir);
+          if (parent === dir) break;
+          dir = parent;
+        }
+        if (!processManagerPath) {
+          processManagerPath = pathMod.resolve(selfDir, '../../scripts/process-manager.mjs');
+        }
       }
 
       // 检查 process-manager 是否存在
       console.log(`[Index] process-manager 路径: ${processManagerPath}`);
+      const processManagerExists = fsMod.existsSync(processManagerPath);
+      if (!processManagerExists) {
+        console.warn(
+          `[Index] 未找到 process-manager（${processManagerPath}），跳过 OpenCode 自动启动（若 OpenCode 未运行请另行启动）`
+        );
+      }
 
       // 使用 start-opencode（幂等：已在运行则跳过）
-      const startResult = spawnSync(process.execPath, [processManagerPath, 'start-opencode'], {
-        encoding: 'utf-8',
-        windowsHide: isWindows,
-        timeout: 15000,
-        stdio: 'pipe',
-      });
+      const startResult = processManagerExists
+        ? spawnSync(process.execPath, [processManagerPath, 'start-opencode'], {
+            encoding: 'utf-8',
+            windowsHide: isWindows,
+            timeout: 15000,
+            stdio: 'pipe',
+          })
+        : null;
 
-      if (startResult.stdout?.trim()) {
-        console.log('[Index] OpenCode 启动输出:', startResult.stdout.trim());
-      }
-      if (startResult.stderr?.trim()) {
-        console.warn('[Index] OpenCode 启动错误:', startResult.stderr.trim());
-      }
-
-      if (startResult.status !== 0) {
-        console.error(`[Index] OpenCode 自动启动失败，退出码: ${startResult.status}（将继续启动 Bridge）`);
-        if (startResult.error) {
-          console.error('[Index] 错误详情:', startResult.error.message);
+      if (startResult) {
+        if (startResult.stdout?.trim()) {
+          console.log('[Index] OpenCode 启动输出:', startResult.stdout.trim());
         }
-      } else {
-        console.log('[Index] OpenCode serve 启动成功');
+        if (startResult.stderr?.trim()) {
+          console.warn('[Index] OpenCode 启动错误:', startResult.stderr.trim());
+        }
+
+        if (startResult.status !== 0) {
+          console.error(`[Index] OpenCode 自动启动失败，退出码: ${startResult.status}（将继续启动 Bridge）`);
+          if (startResult.error) {
+            console.error('[Index] 错误详情:', startResult.error.message);
+          }
+        } else {
+          console.log('[Index] OpenCode serve 启动成功');
+        }
       }
 
       // 如果开启了前台模式，等待 opencode serve 的端口就绪后再弹出 attach 窗口（Windows 专用）
