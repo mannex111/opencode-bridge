@@ -253,6 +253,26 @@ export function mapV2Event(event: { type?: unknown; data?: unknown }): InternalO
       }];
     }
 
+    // v2 表单被回答/取消（可能来自 TUI / Web UI / 其他客户端，而非本桥接器）。
+    // 映射成内部既有事件 questionReplied / questionRejected，复用
+    // opencode-event-hub.handleQuestionResolved：它会移除飞书侧 pending 并
+    // touch 输出缓冲触发卡片重渲染 —— 即「外部作答后飞书卡片同步」。
+    // 非 question 类表单（如 MCP 授权）不在 questionHandler 注册表里，
+    // handleQuestionResolved 查不到会安全 no-op。
+    case 'form.replied': {
+      const id = str(data.id);
+      const sid = str(data.sessionID);
+      if (!id || !sid) return [];
+      return [{ type: 'questionReplied', payload: { requestID: id, sessionID: sid } }];
+    }
+
+    case 'form.cancelled': {
+      const id = str(data.id);
+      const sid = str(data.sessionID);
+      if (!id || !sid) return [];
+      return [{ type: 'questionRejected', payload: { requestID: id, sessionID: sid } }];
+    }
+
     default:
       return [];
   }

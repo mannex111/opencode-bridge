@@ -3,6 +3,7 @@ import type { Message, Part } from '@opencode-ai/sdk';
 import type { DirectoryResponseOptions, PermissionResponseOptions, QuestionResponseOptions, ShellExecutionResult } from './client.js';
 import { opencodeConfig, modelConfig } from '../config.js';
 import { detectApiDialect } from './api-dialect.js';
+import { questionHandler } from './question-handler.js';
 import {
   withOpencodeAuthorizationHeaders,
   appendAuthHint,
@@ -671,10 +672,19 @@ export class MessagesManager {
           return { ok: false };
         }
 
-        // v2 form 字段 key 形如 q0/q1…，按问题下标构造 answer 映射
+        // v2 form 字段 key 形如 q0/q1…，按问题下标构造 answer 映射。
+        //
+        // 答案形状由字段类型决定：多选字段(type=multiselect)必须是 string[]，
+        // 单选字段(type=string)必须是 string。之前只看「值的个数」——
+        // values.length > 1 才发数组——于是多选但只勾了 1 项时会发字符串，
+        // 服务端返回 400 FormInvalidAnswerError: Expected string array for
+        // form field: qN（这就是飞书端作答一直失败的根因）。
+        // 字段类型来自注册的 pending 问题（questionHandler），取不到时退回旧行为。
+        const pendingQuestions = questionHandler.get(requestId)?.request.questions;
         const answer: Record<string, unknown> = {};
         (answers ?? []).forEach((values, index) => {
-          answer[`q${index}`] = values.length > 1 ? values : (values[0] ?? '');
+          const isMulti = pendingQuestions?.[index]?.multiple ?? values.length > 1;
+          answer[`q${index}`] = isMulti ? values : (values[0] ?? '');
         });
         const response = await fetch(`${base}/reply`, {
           method: 'POST',
