@@ -9,6 +9,7 @@ import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { streamStateManager, type ToolRuntimeState, type TimelineSegment, type StreamTimelineState } from '../store/stream-state.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
+import { formatTranslatedError } from '../utils/error-translator.js';
 import {
   type StreamCardSegment,
   type StreamCardPendingPermission,
@@ -288,7 +289,10 @@ export function buildToolTraceOutput(
     : pickFirstDefined(state?.output, state?.result, state?.message, part.output, part.result);
 
   const inputText = stringifyToolOutput(inputValue);
-  const outputText = stringifyToolOutput(outputValue);
+  // 失败时把原始英文错误翻译成「发生了什么 + 建议怎么做」，再附上原始信息
+  const outputText = status === 'failed'
+    ? formatTranslatedError(outputValue)
+    : stringifyToolOutput(outputValue);
   const blocks: string[] = [];
 
   if (inputText && inputText.trim()) {
