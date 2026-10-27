@@ -431,27 +431,22 @@ export function buildControlCard(data: ControlCardData): object {
           },
         ],
       },
+      // select_static 必须直接作为顶层元素：
+      //   飞书 v1 卡片的 action 行只接受 button（放 select_static 会被整块丢弃，
+      //   表现为下拉能渲染出占位符但点开没有选项）；
+      //   v2 卡片更直接——完全不支持 action 这个 tag（ErrCode 200621/200861）。
+      // 同文件 buildSessionControlCard 也是把 select_static 直接放在元素里。
       {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'select_static',
-            placeholder: { tag: 'plain_text', content: '选择模型' },
-            value: { action: 'model_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
-            options: modelOptions,
-          },
-        ],
+        tag: 'select_static',
+        placeholder: { tag: 'plain_text', content: '选择模型' },
+        value: { action: 'model_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
+        options: modelOptions,
       },
       {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'select_static',
-            placeholder: { tag: 'plain_text', content: '选择角色' },
-            value: { action: 'agent_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
-            options: agentOptions,
-          },
-        ],
+        tag: 'select_static',
+        placeholder: { tag: 'plain_text', content: '选择角色' },
+        value: { action: 'agent_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
+        options: agentOptions,
       },
     ],
   };

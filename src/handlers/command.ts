@@ -2183,6 +2183,12 @@ export class CommandHandler {
       ? mappedAgentOptions
       : [{ label: '（主）默认角色', value: 'none' }, ...mappedAgentOptions];
 
+    // 诊断：面板下拉为空时先看这里（providers/agents 是上游取到的原始数量）
+    console.log(
+      `[Panel] 模型选项=${modelOptions.length} 角色选项=${agentOptions.length} ` +
+      `(providers=${safeProviders.length} agents=${visibleAgents.length})`
+    );
+
     return buildControlCard({
       conversationKey: `chat:${chatId}`,
       chatId,
