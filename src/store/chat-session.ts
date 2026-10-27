@@ -53,6 +53,14 @@ class ChatSessionStore {
       }
     } catch (error) {
       console.error('[Store] 加载数据失败:', error);
+      // 坏文件先另存一份再放弃，避免后续 save() 用空 store 把它覆盖掉（数据彻底丢失）。
+      try {
+        const backup = `${STORE_FILE}.corrupt-${Date.now()}.json`;
+        fs.renameSync(STORE_FILE, backup);
+        console.error(`[Store] 已将损坏的存储文件另存为 ${backup}，本次以空 store 启动（如需恢复请改回该文件）`);
+      } catch (backupError) {
+        console.error('[Store] 备份损坏的存储文件失败:', backupError);
+      }
     }
   }
 
@@ -97,7 +105,12 @@ class ChatSessionStore {
   private save(): void {
     try {
       const obj = Object.fromEntries(this.data);
-      fs.writeFileSync(STORE_FILE, JSON.stringify(obj, null, 2));
+      // 原子写：先写同目录临时文件，再 rename 覆盖（同一文件系统内 rename 是原子的）。
+      // 直接 writeFileSync 会先截断目标文件，进程中途被杀、或另一个进程同时读时，
+      // 会读到半截 JSON → load 解析失败 → 群↔会话绑定丢失。
+      const tmp = `${STORE_FILE}.tmp-${process.pid}-${Date.now()}`;
+      fs.writeFileSync(tmp, JSON.stringify(obj, null, 2));
+      fs.renameSync(tmp, STORE_FILE);
     } catch (error) {
       console.error('[Store] 保存数据失败:', error);
     }
