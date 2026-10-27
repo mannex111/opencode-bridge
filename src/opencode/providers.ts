@@ -16,10 +16,36 @@ interface ProvidersSnapshot {
 export class ProvidersManager {
   constructor(private deps: ProvidersDeps) {}
 
-  // 上一次成功的 provider/agent 列表。OpenCode 侧瞬时不可用（服务端关掉空闲
-  // keep-alive 连接、实例冷启动等）时兜底，避免面板模型/角色下拉直接变空。
+  // 上一次成功的 provider/agent 列表。OpenCode 侧瞬时不可用（服务端 location 实例
+  // 冷启动、实例回收后重建、keep-alive 断连等）时兜底，避免面板模型/角色下拉直接变空。
   private lastGoodProviders: ProvidersSnapshot | null = null;
   private lastGoodAgents: OpencodeAgentInfo[] | null = null;
+
+  /**
+   * v2 的 location 实例在冷启动/重建期间，/api/provider 与 /api/agent 会返回
+   * **空数组**（HTTP 200，不报错），此时直接用会把面板下拉渲染成空。
+   * 所以这里对「空结果」也做短退避重试，而不是只对异常重试。
+   */
+  private async fetchListWithRetry<T>(fetchList: () => Promise<T[]>, label: string): Promise<T[]> {
+    const delays = [0, 400, 1200];
+    let last: T[] = [];
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      if (delays[attempt] > 0) {
+        await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      }
+      try {
+        last = await fetchList();
+      } catch (error) {
+        console.warn(`[OpenCode] ${label} 第 ${attempt + 1} 次获取失败:`, error);
+        last = [];
+      }
+      if (last.length > 0) {
+        return last;
+      }
+    }
+    console.warn(`[OpenCode] ${label} 连续 ${delays.length} 次返回空（服务端 location 可能正在冷启动）`);
+    return last;
+  }
 
   // 获取客户端实例
   private getClient(): SdkOpencodeClient {
@@ -36,7 +62,10 @@ export class ProvidersManager {
     default: Record<string, string>;
   }> {
     if ((await detectApiDialect()) === 'v2') {
-      const [providers, models] = await Promise.all([listV2Providers(), listV2Models()]);
+      const [providers, models] = await Promise.all([
+        this.fetchListWithRetry(() => listV2Providers(), 'provider 列表'),
+        this.fetchListWithRetry(() => listV2Models(), 'model 列表'),
+      ]);
       const modelsByProvider = new Map<string, Array<{ id: string; name: string }>>();
       for (const model of models) {
         const providerId = typeof model.providerID === 'string' ? model.providerID : '';
@@ -50,13 +79,14 @@ export class ProvidersManager {
         name: String(p.name ?? p.id),
         models: modelsByProvider.get(String(p.id)) ?? [],
       }));
-      if (shaped.length > 0) {
+      const modelCount = shaped.reduce((sum, p) => sum + p.models.length, 0);
+      if (shaped.length > 0 && modelCount > 0) {
         this.lastGoodProviders = { providers: shaped, default: {} };
         return this.lastGoodProviders;
       }
       if (this.lastGoodProviders) {
         console.warn(
-          `[OpenCode] provider 列表为空(${providers.length} provider / ${models.length} model)，使用上一次成功结果兜底`
+          `[OpenCode] provider 列表为空(providers=${shaped.length} models=${modelCount})，使用上一次成功结果兜底`
         );
         return this.lastGoodProviders;
       }
@@ -260,7 +290,7 @@ export class ProvidersManager {
   async getAgents(): Promise<OpencodeAgentInfo[]> {
     let rawAgents: unknown[];
     if ((await detectApiDialect()) === 'v2') {
-      rawAgents = await listV2Agents();
+      rawAgents = await this.fetchListWithRetry(() => listV2Agents(), 'agent 列表');
     } else {
       const client = this.getClient();
       const result = await client.app.agents();
