@@ -396,6 +396,16 @@ export function buildControlCard(data: ControlCardData): object {
   }));
 
   return {
+    // 纯 v2 卡片结构（schema 2.0 + body.elements，交互组件直接作为元素）。
+    //
+    // 踩过的坑（2026-10-27 排查「面板模型下拉为空/不渲染」）：
+    //  1) v1 卡片里把 select_static 放进 action 行 → 飞书把整块 select 丢弃；
+    //     v2 干脆不支持 action 这个 tag（ErrCode 200621/200861）。
+    //  2) 即使把 select_static 提到 elements 顶层，只要前面存在 action 行，
+    //     后面的 select 元素依然不渲染（实测：去掉 action 行就正常）。
+    //  3) 文本要用 v2 的 { tag:'markdown', content }，v1 的 div/lark_md 不适用。
+    // 所以统一按 v2 写：文本用 markdown，按钮与下拉都直接作为 body.elements 的元素。
+    schema: '2.0',
     config: {
       wide_screen_mode: true,
     },
@@ -406,49 +416,38 @@ export function buildControlCard(data: ControlCardData): object {
       },
       template: 'blue',
     },
-    elements: [
-      {
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
+    body: {
+      elements: [
+        {
+          tag: 'markdown',
           content: `**当前模型**: ${data.currentModel || '跟随默认'}\n**当前角色**: ${data.currentAgent || '默认角色'}\n**当前强度**: ${data.currentEffort || '默认（自动）'}（用 /effort 修改）`,
         },
-      },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '⏹️ 停止' },
-            type: 'danger',
-            value: { action: 'stop', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
-          },
-          {
-            tag: 'button',
-            text: { tag: 'plain_text', content: '↩️ 撤回' },
-            type: 'default',
-            value: { action: 'undo', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
-          },
-        ],
-      },
-      // select_static 必须直接作为顶层元素：
-      //   飞书 v1 卡片的 action 行只接受 button（放 select_static 会被整块丢弃，
-      //   表现为下拉能渲染出占位符但点开没有选项）；
-      //   v2 卡片更直接——完全不支持 action 这个 tag（ErrCode 200621/200861）。
-      // 同文件 buildSessionControlCard 也是把 select_static 直接放在元素里。
-      {
-        tag: 'select_static',
-        placeholder: { tag: 'plain_text', content: '选择模型' },
-        value: { action: 'model_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
-        options: modelOptions,
-      },
-      {
-        tag: 'select_static',
-        placeholder: { tag: 'plain_text', content: '选择角色' },
-        value: { action: 'agent_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
-        options: agentOptions,
-      },
-    ],
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '⏹️ 停止' },
+          type: 'danger',
+          value: { action: 'stop', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
+        },
+        {
+          tag: 'button',
+          text: { tag: 'plain_text', content: '↩️ 撤回' },
+          type: 'default',
+          value: { action: 'undo', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
+        },
+        {
+          tag: 'select_static',
+          placeholder: { tag: 'plain_text', content: '选择模型' },
+          value: { action: 'model_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
+          options: modelOptions,
+        },
+        {
+          tag: 'select_static',
+          placeholder: { tag: 'plain_text', content: '选择角色' },
+          value: { action: 'agent_select', conversationKey: data.conversationKey, chatId: data.chatId, chatType: data.chatType },
+          options: agentOptions,
+        },
+      ],
+    },
   };
 }
 
